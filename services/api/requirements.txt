@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+yfinance
+anthropic
+requests
+redis
+python-dotenv
+httpx
+pydantic
