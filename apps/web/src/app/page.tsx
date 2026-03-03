@@ -361,7 +361,7 @@ function ChartCanvas({ data, overlays }: { data: any[]; overlays: { sma20: boole
         `<div>High <span style="color:${clr};float:right;font-weight:600">${d.high?.toFixed(2)}</span></div>` +
         `<div>Low  <span style="color:${clr};float:right;font-weight:600">${d.low?.toFixed(2)}</span></div>` +
         `<div>Close <span style="color:${clr};float:right;font-weight:700">${d.close?.toFixed(2)}</span></div>` +
-        `<div style="border-top:1px solid ${dark?"#3f3f46":"#e5e7eb"};margin-top:4px;padding-top:4px;color:${clr}">` +
+        `<div style="border-top:1px solid #3f3f46;margin-top:4px;padding-top:4px;color:${clr}">` +
         `${parseFloat(chgPct) >= 0 ? "▲ +" : "▼ "}${chgPct}%</div>` +
         `<div style="color:#71717a">Vol: ${((d.volume||0)/1e6).toFixed(1)}M</div>` +
         (d.rsi != null ? `<div style="color:#a78bfa">RSI: ${d.rsi?.toFixed(1)}</div>` : "") +
