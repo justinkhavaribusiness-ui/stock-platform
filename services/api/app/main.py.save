@@ -1,0 +1,347 @@
+import os
+import json
+import asyncio
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List
+
+import httpx
+import redis
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# Always load services/api/.env even if you run from another folder
+BASE_DIR = Path(__file__).resolve().parents[1]  # .../services/api
+load_dotenv(BASE_DIR / ".env")
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+rdb = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+app = FastAPI(title="Stock Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Watchlist (stored in Redis so it survives API restarts) ---
+
+WATCHLIST_KEY = "watchlist"
+
+class WatchlistAdd(BaseModel):
+    ticker: str
+
+@app.get("/watchlist")
+def get_watchlist():
+    tickers = rdb.smembers(WATCHLIST_KEY)
+    return {"tickers": sorted(tickers)}
+
+@app.post("/watchlist")
+def add_to_watchlist(body: WatchlistAdd):
+    ticker = body.ticker.strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker cannot be empty")
+    rdb.sadd(WATCHLIST_KEY, ticker)
+    return {"added": ticker, "tickers": sorted(rdb.smembers(WATCHLIST_KEY))}
+
+@app.delete("/watchlist/{ticker}")
+def remove_from_watchlist(ticker: str):
+    ticker = ticker.strip().upper()
+    rdb.srem(WATCHLIST_KEY, ticker)
+    return {"removed": ticker, "tickers": sorted(rdb.smembers(WATCHLIST_KEY))}
+
+# --- Health ---
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+# --- Quotes ---
+
+async def fetch_alpha_vantage_quote(client: httpx.AsyncClient, symbol: str, api_key: str):
+    url = "https://www.alphavantage.co/query"
+    params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": api_key}
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if "Note" in data:
+        return {"ticker": symbol, "error": data["Note"], "source": "alphavantage"}
+    if "Information" in data:
+        return {"ticker": symbol, "error": data["Information"], "source": "alphavantage"}
+    if "Error Message" in data:
+        return {"ticker": symbol, "error": data["Error Message"], "source": "alphavantage"}
+
+    quote = data.get("Global Quote") or {}
+    price_str = quote.get("05. price")
+    if not price_str:
+        return {"ticker": symbol, "error": "No quote returned", "source": "alphavantage"}
+
+    return {
+        "ticker": symbol,
+        "price": float(price_str),
+        "asof": datetime.now(timezone.utc).isoformat(),
+        "source": "alphavantage",
+    }
+
+@app.get("/quotes")
+async def quotes(tickers: str = Query(..., description="Comma-separated tickers, e.g. AAPL,MSFT")):
+    api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing ALPHAVANTAGE_API_KEY in services/api/.env")
+
+    symbols = [x.strip().upper() for x in tickers.split(",") if x.strip()]
+    out = []
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        for i, sym in enumerate(symbols):
+            cache_key = f"quote:{sym}"
+            cached = rdb.get(cache_key)
+            if cached:
+                item = json.loads(cached)
+                item["cache"] = "hit"
+                out.append(item)
+                continue
+
+            item = await fetch_alpha_vantage_quote(client, sym, api_key)
+            item["cache"] = "miss"
+            if "price" in item:
+                rdb.setex(cache_key, 120, json.dumps(item))
+
+            out.append(item)
+
+            if i < len(symbols) - 1:
+                await asyncio.sleep(13)
+
+    return {"data": out}import os
+import json
+import asyncio
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import List
+
+import httpx
+import redis
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+# Always load services/api/.env even if you run from another folder
+BASE_DIR = Path(__file__).resolve().parents[1]  # .../services/api
+load_dotenv(BASE_DIR / ".env")
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+rdb = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+app = FastAPI(title="Stock Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Watchlist (stored in Redis so it survives API restarts) ---
+
+WATCHLIST_KEY = "watchlist"
+
+class WatchlistAdd(BaseModel):
+    ticker: str
+
+@app.get("/watchlist")
+def get_watchlist():
+    tickers = rdb.smembers(WATCHLIST_KEY)
+    return {"tickers": sorted(tickers)}
+
+@app.post("/watchlist")
+def add_to_watchlist(body: WatchlistAdd):
+    ticker = body.ticker.strip().upper()
+    if not ticker:
+        raise HTTPException(status_code=400, detail="Ticker cannot be empty")
+    rdb.sadd(WATCHLIST_KEY, ticker)
+    return {"added": ticker, "tickers": sorted(rdb.smembers(WATCHLIST_KEY))}
+
+@app.delete("/watchlist/{ticker}")
+def remove_from_watchlist(ticker: str):
+    ticker = ticker.strip().upper()
+    rdb.srem(WATCHLIST_KEY, ticker)
+    return {"removed": ticker, "tickers": sorted(rdb.smembers(WATCHLIST_KEY))}
+
+# --- Health ---
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+# --- Quotes ---
+
+async def fetch_alpha_vantage_quote(client: httpx.AsyncClient, symbol: str, api_key: str):
+    url = "https://www.alphavantage.co/query"
+    params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": api_key}
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if "Note" in data:
+        return {"ticker": symbol, "error": data["Note"], "source": "alphavantage"}
+    if "Information" in data:
+        return {"ticker": symbol, "error": data["Information"], "source": "alphavantage"}
+    if "Error Message" in data:
+        return {"ticker": symbol, "error": data["Error Message"], "source": "alphavantage"}
+
+    quote = data.get("Global Quote") or {}
+    price_str = quote.get("05. price")
+    if not price_str:
+        return {"ticker": symbol, "error": "No quote returned", "source": "alphavantage"}
+
+    return {
+        "ticker": symbol,
+        "price": float(price_str),
+        "asof": datetime.now(timezone.utc).isoformat(),
+        "source": "alphavantage",
+    }
+
+@app.get("/quotes")
+async def quotes(tickers: str = Query(..., description="Comma-separated tickers, e.g. AAPL,MSFT")):
+    api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing ALPHAVANTAGE_API_KEY in services/api/.env")
+
+    symbols = [x.strip().upper() for x in tickers.split(",") if x.strip()]
+    out = []
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        for i, sym in enumerate(symbols):
+            cache_key = f"quote:{sym}"
+            cached = rdb.get(cache_key)
+            if cached:
+                item = json.loads(cached)
+                item["cache"] = "hit"
+                out.append(item)
+                continue
+
+            item = await fetch_alpha_vantage_quote(client, sym, api_key)
+            item["cache"] = "miss"
+            if "price" in item:
+                rdb.setex(cache_key, 120, json.dumps(item))
+
+            out.append(item)
+
+            if i < len(symbols) - 1:
+                await asyncio.sleep(13)
+
+    return {"data": out}import os
+import json
+import asyncio
+from datetime import datetime, timezone
+from pathlib import Path
+
+import httpx
+import redis
+from dotenv import load_dotenv
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+
+# Always load services/api/.env even if you run from another folder
+BASE_DIR = Path(__file__).resolve().parents[1]  # .../services/api
+load_dotenv(BASE_DIR / ".env")
+
+ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+]
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+rdb = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+app = FastAPI(title="Stock Platform API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+async def fetch_alpha_vantage_quote(client: httpx.AsyncClient, symbol: str, api_key: str):
+    url = "https://www.alphavantage.co/query"
+    params = {"function": "GLOBAL_QUOTE", "symbol": symbol, "apikey": api_key}
+    resp = await client.get(url, params=params)
+    resp.raise_for_status()
+    data = resp.json()
+
+    # Handle Alpha Vantage limit / error responses explicitly
+    if "Note" in data:
+        return {"ticker": symbol, "error": data["Note"], "source": "alphavantage"}
+    if "Information" in data:
+        return {"ticker": symbol, "error": data["Information"], "source": "alphavantage"}
+    if "Error Message" in data:
+        return {"ticker": symbol, "error": data["Error Message"], "source": "alphavantage"}
+
+    quote = data.get("Global Quote") or {}
+    price_str = quote.get("05. price")
+    if not price_str:
+        return {"ticker": symbol, "error": "No quote returned", "source": "alphavantage"}
+
+    return {
+        "ticker": symbol,
+        "price": float(price_str),
+        "asof": datetime.now(timezone.utc).isoformat(),
+        "source": "alphavantage",
+    }
+
+@app.get("/quotes")
+async def quotes(tickers: str = Query(..., description="Comma-separated tickers, e.g. AAPL,MSFT")):
+    api_key = os.getenv("ALPHAVANTAGE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Missing ALPHAVANTAGE_API_KEY in services/api/.env")
+
+    symbols = [x.strip().upper() for x in tickers.split(",") if x.strip()]
+    out = []
+
+    # Alpha Vantage free tier is rate-limited. Cache + pacing prevents random failures.
+    async with httpx.AsyncClient(timeout=20) as client:
+        for i, sym in enumerate(symbols):
+            cache_key = f"quote:{sym}"
+            cached = rdb.get(cache_key)
+            if cached:
+                item = json.loads(cached)
+                item["cache"] = "hit"
+                out.append(item)
+                continue
+
+            item = await fetch_alpha_vantage_quote(client, sym, api_key)
+            item["cache"] = "miss"
+            if "price" in item:
+                rdb.setex(cache_key, 120, json.dumps(item))  # 2 min cache
+
+            out.append(item)
+
+            # If requesting multiple uncached symbols, pace requests to avoid rate limits
+            if i < len(symbols) - 1:
+                await asyncio.sleep(13)
+
+    return {"data": out}

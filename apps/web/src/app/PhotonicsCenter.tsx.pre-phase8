@@ -1,0 +1,1687 @@
+"use client";
+import { useState, useEffect } from "react";
+
+const API = "http://localhost:8001/photonics";
+
+const PHOTONICS_SUBTABS = ["DASHBOARD", "WATCHLIST", "SUPPLY CHAIN", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS", "CATALYSTS", "TECHNICALS", "PORTFOLIO", "RS", "RISK", "NEWS", "ALERTS"];
+
+const STEP_NAMES: Record<number, string> = {
+  0: "Mining", 1: "Substrate", 2: "Epitaxy", 3: "Wafer Fab",
+  4: "Dicing", 5: "Assembly", 6: "Transceiver", 7: "Data Center"
+};
+
+const DEFAULT_WATCHLIST_TICKERS = ["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
+
+const S: Record<string, any> = {
+  card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 },
+  input: { background: "#0a0e14", border: "1px solid #2a3441", borderRadius: 4, padding: "8px 12px", color: "#e6edf3", fontFamily: "monospace", fontSize: 13, width: "100%", outline: "none" },
+  select: { background: "#0a0e14", border: "1px solid #2a3441", borderRadius: 4, padding: "8px 12px", color: "#e6edf3", fontFamily: "monospace", fontSize: 13, outline: "none" },
+  btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 13, fontWeight: "bold" },
+  btnSecondary: { padding: "8px 16px", background: "#2a3441", color: "#e6edf3", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 13 },
+  btnDanger: { padding: "6px 12px", background: "#c9362c", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 12 },
+  btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 11 },
+  label: { color: "#7d8590", fontSize: 11, fontFamily: "monospace", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4, display: "block" },
+  green: "#2ea043", red: "#f85149", yellow: "#d29922", blue: "#58a6ff", cyan: "#39d353", dim: "#484f58", text: "#e6edf3", muted: "#7d8590",
+  mono: { fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" },
+};
+
+export default function PhotonicsCenter() {
+  const [subTab, setSubTab] = useState("DASHBOARD");
+  return (
+    <div style={{ ...S.mono }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #1e2733", overflowX: "auto" }}>
+        {PHOTONICS_SUBTABS.map(t => (
+          <button key={t} onClick={() => setSubTab(t)}
+            style={{
+              padding: "10px 16px", background: subTab === t ? "#0d1117" : "transparent",
+              color: subTab === t ? "#2ea043" : "#7d8590", border: "none",
+              borderBottom: subTab === t ? "2px solid #2ea043" : "2px solid transparent",
+              cursor: "pointer", fontFamily: "monospace", fontSize: 12, fontWeight: subTab === t ? "bold" : "normal",
+              transition: "all 0.2s", whiteSpace: "nowrap", letterSpacing: 0.5
+            }}>
+            {t}
+          </button>
+        ))}
+      </div>
+      {subTab === "DASHBOARD" && <PhotonicsDashboard onNavigate={setSubTab} />}
+      {subTab === "WATCHLIST" && <PhotonicsWatchlist />}
+      {subTab === "SUPPLY CHAIN" && <SupplyChainMap />}
+      {subTab === "RESEARCH" && <ResearchLibrary />}
+      {subTab === "AI ANALYST" && <PhotonicsAI />}
+      {subTab === "EARNINGS" && <EarningsWarRoom />}
+      {subTab === "THESIS" && <ThesisScorecard />}
+      {subTab === "CATALYSTS" && <CatalystCalendar />}
+      {subTab === "TECHNICALS" && <TechnicalScanner />}
+      {subTab === "PORTFOLIO" && <PortfolioOverlay />}
+      {subTab === "RS" && <RelativeStrength />}
+      {subTab === "RISK" && <RiskAnalytics />}
+      {subTab === "NEWS" && <NewsFeed />}
+      {subTab === "ALERTS" && <AlertsPanel />}
+    </div>
+  );
+}
+
+function PhotonicsDashboard({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    fetch(`${API}/dashboard`).then(r => r.json()).then(setData).catch(console.error).finally(() => setLoading(false));
+  }, []);
+  if (loading) return <div style={{ color: S.muted, padding: 40, textAlign: "center" }}>Loading dashboard...</div>;
+  if (!data) return <div style={{ color: S.red, padding: 40 }}>Failed to load dashboard</div>;
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ fontSize: 18, color: S.green, fontWeight: "bold" }}>PHOTONICS COMMAND CENTER</div>
+        <div style={{ color: S.dim, fontSize: 11 }}>19 tickers · {data.research_count} research docs · {data.thesis_count} thesis items</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "Buy Zone", value: data.buy_zone_count, color: data.buy_zone_count > 0 ? S.green : S.muted, sub: "tickers at target" },
+          { label: "Universe", value: data.total_tickers, color: S.blue, sub: "tracked companies" },
+          { label: "Research", value: data.research_count, color: S.cyan, sub: "deep dives stored" },
+          { label: "Catalysts", value: data.upcoming_catalysts?.length || 0, color: S.yellow, sub: "upcoming events" },
+        ].map(c => (
+          <div key={c.label} style={S.card}>
+            <div style={S.label}>{c.label}</div>
+            <div style={{ fontSize: 28, fontWeight: "bold", color: c.color }}>{c.value}</div>
+            <div style={{ color: S.dim, fontSize: 11 }}>{c.sub}</div>
+          </div>
+        ))}
+      </div>
+      {data.buy_zone_count > 0 && (
+        <div style={{ ...S.card, borderColor: S.green, background: "rgba(46, 160, 67, 0.05)" }}>
+          <div style={{ color: S.green, fontWeight: "bold", marginBottom: 8 }}>🟢 BUY ZONE ALERTS</div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+            {data.buy_zone_tickers.map((t: any) => (
+              <div key={t.ticker} style={{ color: S.text }}>
+                <span style={{ color: S.green, fontWeight: "bold" }}>{t.ticker}</span>
+                <span style={{ color: S.dim }}> ${t.price} (target ${t.target})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={S.card}>
+          <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>TOP MOVERS TODAY</div>
+          {data.top_movers?.map((m: any) => (
+            <div key={m.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+              <span style={{ color: S.text }}>{m.ticker}</span>
+              <span style={{ color: m.change_pct >= 0 ? S.green : S.red, fontWeight: "bold" }}>{m.change_pct >= 0 ? "+" : ""}{m.change_pct}%</span>
+            </div>
+          ))}
+        </div>
+        <div style={S.card}>
+          <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>UPCOMING CATALYSTS</div>
+          {data.upcoming_catalysts?.length > 0 ? data.upcoming_catalysts.map((c: any) => (
+            <div key={c.id} style={{ padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: S.blue }}>{c.ticker}</span>
+                <span style={{ color: S.dim, fontSize: 11 }}>{c.date}</span>
+              </div>
+              <div style={{ color: S.muted, fontSize: 12 }}>{c.title}</div>
+            </div>
+          )) : <div style={{ color: S.dim, fontSize: 12 }}>No upcoming catalysts. Add some in the CATALYSTS tab.</div>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        {["WATCHLIST", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS"].map(t => (
+          <button key={t} onClick={() => onNavigate(t)} style={S.btnSecondary}>{t} →</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PhotonicsWatchlist() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("all");
+  const [editingTicker, setEditingTicker] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState("");
+  const fetchWatchlist = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/watchlist`); setData(await res.json()); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { fetchWatchlist(); }, []);
+  const updateTarget = async (ticker: string) => {
+    await fetch(`${API}/watchlist/${ticker}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target: parseFloat(editTarget) }) });
+    setEditingTicker(null); fetchWatchlist();
+  };
+  if (loading) return <div style={{ color: S.muted, padding: 40, textAlign: "center" }}>Fetching live prices for 19 tickers...</div>;
+  if (!data) return <div style={{ color: S.red }}>Failed to load</div>;
+  let items = data.watchlist || [];
+  if (filter === "buy_zone") items = items.filter((w: any) => w.in_buy_zone);
+  if (filter === "pure_play") items = items.filter((w: any) => w.pure_play);
+  const buyZoneCount = (data.watchlist || []).filter((w: any) => w.in_buy_zone).length;
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>PHOTONICS WATCHLIST</span>
+          <span style={{ color: S.dim, fontSize: 12, marginLeft: 12 }}>{items.length} tickers</span>
+          {buyZoneCount > 0 && <span style={{ color: S.green, fontSize: 12, marginLeft: 12, fontWeight: "bold" }}>{buyZoneCount} in buy zone</span>}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["all", "buy_zone", "pure_play"] as const).map(f => (
+            <button key={f} onClick={() => setFilter(f)}
+              style={{ ...S.btnSmall, background: filter === f ? "#1a8c5e" : "#2a3441", color: filter === f ? "#fff" : "#aaa" }}>
+              {f === "all" ? "ALL" : f === "buy_zone" ? "BUY ZONE" : "PURE PLAY"}
+            </button>
+          ))}
+          <button onClick={fetchWatchlist} style={S.btnSmall}>↻ REFRESH</button>
+        </div>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid #2a3441" }}>
+              {["TICKER", "PRICE", "CHG%", "TARGET", "% TO TARGET", "STEP", "STATUS"].map(h => (
+                <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: S.muted, fontSize: 11, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((w: any) => (
+              <tr key={w.ticker} style={{ borderBottom: "1px solid #1e2733", background: w.in_buy_zone ? "rgba(46, 160, 67, 0.04)" : "transparent" }}>
+                <td style={{ padding: "10px 12px" }}>
+                  <span style={{ color: S.text, fontWeight: "bold" }}>{w.ticker}</span>
+                  <span style={{ color: S.dim, fontSize: 11, marginLeft: 8 }}>{w.name}</span>
+                  {w.pure_play && <span style={{ color: S.cyan, fontSize: 9, marginLeft: 6, border: "1px solid #39d353", padding: "1px 4px", borderRadius: 3 }}>PP</span>}
+                </td>
+                <td style={{ padding: "10px 12px", color: S.text, fontWeight: "bold" }}>${w.current_price || "—"}</td>
+                <td style={{ padding: "10px 12px", color: w.change_pct >= 0 ? S.green : S.red, fontWeight: "bold" }}>
+                  {w.change_pct >= 0 ? "+" : ""}{w.change_pct}%
+                </td>
+                <td style={{ padding: "10px 12px" }}>
+                  {editingTicker === w.ticker ? (
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input value={editTarget} onChange={e => setEditTarget(e.target.value)} onKeyDown={e => e.key === "Enter" && updateTarget(w.ticker)}
+                        style={{ ...S.input, width: 80, padding: "4px 8px" }} autoFocus />
+                      <button onClick={() => updateTarget(w.ticker)} style={{ ...S.btnSmall, background: S.green, color: "#fff" }}>✓</button>
+                    </div>
+                  ) : (
+                    <span onClick={() => { setEditingTicker(w.ticker); setEditTarget(String(w.target)); }}
+                      style={{ color: S.blue, cursor: "pointer" }}>${w.target}</span>
+                  )}
+                </td>
+                <td style={{ padding: "10px 12px", color: w.pct_to_target <= 0 ? S.green : w.pct_to_target <= 10 ? S.yellow : S.muted }}>
+                  {w.pct_to_target !== null ? `${w.pct_to_target > 0 ? "+" : ""}${w.pct_to_target}%` : "—"}
+                </td>
+                <td style={{ padding: "10px 12px", color: S.dim, fontSize: 11 }}>{STEP_NAMES[w.step] || `Step ${w.step}`}</td>
+                <td style={{ padding: "10px 12px" }}>
+                  {w.in_buy_zone && <span style={{ color: S.green, fontWeight: "bold", fontSize: 12 }}>🟢 BUY ZONE</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ color: S.dim, fontSize: 11, marginTop: 12 }}>Last updated: {new Date(data.updated_at).toLocaleString()} · Click target price to edit</div>
+    </div>
+  );
+}
+
+function SupplyChainMap() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
+  const [impactTicker, setImpactTicker] = useState("");
+  const [impactEvent, setImpactEvent] = useState("");
+  const [impactResult, setImpactResult] = useState<any>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  useEffect(() => {
+    fetch(`${API}/supply-chain`).then(r => r.json()).then(setData).catch(console.error).finally(() => setLoading(false));
+  }, []);
+  const analyzeImpact = async () => {
+    if (!impactTicker || !impactEvent) return;
+    setAnalyzing(true);
+    try {
+      const res = await fetch(`${API}/ai/analyze-chain-impact`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: impactTicker, event: impactEvent }) });
+      setImpactResult(await res.json());
+    } catch (e) { console.error(e); }
+    setAnalyzing(false);
+  };
+  if (loading) return <div style={{ color: S.muted, padding: 40, textAlign: "center" }}>Loading supply chain data...</div>;
+  if (!data) return <div style={{ color: S.red }}>Failed to load</div>;
+  return (
+    <div>
+      <div style={{ color: S.text, fontWeight: "bold", fontSize: 15, marginBottom: 16 }}>PHOTONICS SUPPLY CHAIN</div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 8, marginBottom: 20 }}>
+        {data.steps.map((step: any, i: number) => (
+          <div key={step.step} onClick={() => setSelectedStep(selectedStep === step.step ? null : step.step)}
+            style={{ ...S.card, minWidth: 140, flex: "0 0 auto", cursor: "pointer", position: "relative",
+              borderColor: selectedStep === step.step ? S.green : step.companies.some((c: any) => c.in_buy_zone) ? S.green : "#1e2733",
+              background: selectedStep === step.step ? "rgba(46, 160, 67, 0.05)" : "#0d1117" }}>
+            <div style={{ color: S.dim, fontSize: 10, marginBottom: 4 }}>STEP {step.step}</div>
+            <div style={{ color: S.text, fontWeight: "bold", fontSize: 12, marginBottom: 8 }}>{step.name}</div>
+            {step.companies.map((c: any) => (
+              <div key={c.ticker} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "3px 0" }}>
+                <span style={{ color: c.in_buy_zone ? S.green : S.text }}>{c.ticker}</span>
+                <span style={{ color: c.change_pct >= 0 ? S.green : S.red }}>{c.change_pct >= 0 ? "+" : ""}{c.change_pct}%</span>
+              </div>
+            ))}
+            {step.companies.length === 0 && <div style={{ color: S.dim, fontSize: 11 }}>No tracked cos</div>}
+            {i < data.steps.length - 1 && <div style={{ position: "absolute", right: -12, top: "50%", color: S.dim, fontSize: 16 }}>→</div>}
+          </div>
+        ))}
+      </div>
+      {selectedStep !== null && (
+        <div style={{ ...S.card, borderColor: S.green }}>
+          {(() => {
+            const step = data.steps.find((s: any) => s.step === selectedStep);
+            return step ? (
+              <>
+                <div style={{ color: S.green, fontWeight: "bold", fontSize: 14, marginBottom: 8 }}>Step {step.step}: {step.name}</div>
+                <div style={{ color: S.text, marginBottom: 8, fontSize: 13 }}>{step.description}</div>
+                <div style={{ color: S.yellow, fontSize: 12, marginBottom: 12 }}>⚠ Bottleneck: {step.bottleneck}</div>
+                {step.companies.map((c: any) => (
+                  <div key={c.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #1e2733" }}>
+                    <div><span style={{ color: S.text, fontWeight: "bold" }}>{c.ticker}</span><span style={{ color: S.dim, marginLeft: 8, fontSize: 12 }}>{c.name}</span></div>
+                    <div style={{ textAlign: "right" }}>
+                      <span style={{ color: S.text, marginRight: 12 }}>${c.price}</span>
+                      <span style={{ color: c.change_pct >= 0 ? S.green : S.red }}>{c.change_pct >= 0 ? "+" : ""}{c.change_pct}%</span>
+                      {c.in_buy_zone && <span style={{ color: S.green, marginLeft: 8, fontSize: 11 }}>🟢</span>}
+                    </div>
+                  </div>
+                ))}
+              </>
+            ) : null;
+          })()}
+        </div>
+      )}
+      <div style={{ ...S.card, marginTop: 16 }}>
+        <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>SUPPLY CHAIN IMPACT ANALYZER</div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <select value={impactTicker} onChange={e => setImpactTicker(e.target.value)} style={{ ...S.select, width: 120 }}>
+            <option value="">Ticker</option>
+            {data.steps.flatMap((s: any) => s.companies).map((c: any) => (
+              <option key={c.ticker} value={c.ticker}>{c.ticker}</option>
+            ))}
+          </select>
+          <input value={impactEvent} onChange={e => setImpactEvent(e.target.value)} placeholder="Describe event (e.g., 'capacity expansion 30%')"
+            onKeyDown={e => e.key === "Enter" && analyzeImpact()} style={{ ...S.input, flex: 1 }} />
+          <button onClick={analyzeImpact} disabled={analyzing} style={S.btn}>{analyzing ? "Analyzing..." : "ANALYZE"}</button>
+        </div>
+        {impactResult && (
+          <div style={{ color: S.text, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, maxHeight: 400, overflowY: "auto" }}>
+            {impactResult.analysis}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ResearchLibrary() {
+  const [research, setResearch] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [filterTicker, setFilterTicker] = useState("");
+  const [filterTag, setFilterTag] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [newTitle, setNewTitle] = useState("");
+  const [newContent, setNewContent] = useState("");
+  const [newTags, setNewTags] = useState("");
+  const [newSource, setNewSource] = useState("");
+  const fetchResearch = async () => {
+    setLoading(true);
+    let url = `${API}/research`;
+    const params: string[] = [];
+    if (filterTicker) params.push(`ticker=${filterTicker}`);
+    if (filterTag) params.push(`tag=${filterTag}`);
+    if (params.length) url += `?${params.join("&")}`;
+    try { const res = await fetch(url); const json = await res.json(); setResearch(json.research || []); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { fetchResearch(); }, [filterTicker, filterTag]);
+  const addResearch = async () => {
+    if (!newTitle || !newContent) return;
+    await fetch(`${API}/research`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTitle, content: newContent, tags: newTags.split(",").map(t => t.trim()).filter(Boolean), source: newSource }) });
+    setNewTitle(""); setNewContent(""); setNewTags(""); setNewSource(""); setShowAdd(false); fetchResearch();
+  };
+  const deleteResearch = async (id: string) => {
+    await fetch(`${API}/research/${id}`, { method: "DELETE" }); fetchResearch();
+  };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>RESEARCH LIBRARY</span>
+          <span style={{ color: S.dim, fontSize: 12, marginLeft: 12 }}>{research.length} docs</span>
+        </div>
+        <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ ADD DEEP DIVE"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <input value={filterTicker} onChange={e => setFilterTicker(e.target.value.toUpperCase())} placeholder="Filter by ticker" style={{ ...S.input, width: 160 }} />
+        <input value={filterTag} onChange={e => setFilterTag(e.target.value)} placeholder="Filter by tag" style={{ ...S.input, width: 160 }} />
+        {(filterTicker || filterTag) && <button onClick={() => { setFilterTicker(""); setFilterTag(""); }} style={S.btnSmall}>Clear</button>}
+      </div>
+      {showAdd && (
+        <div style={{ ...S.card, borderColor: S.green }}>
+          <input value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Title" style={{ ...S.input, marginBottom: 8 }} />
+          <textarea value={newContent} onChange={e => setNewContent(e.target.value)} placeholder="Paste your deep dive, analysis, or notes here..."
+            style={{ ...S.input, height: 200, resize: "vertical", marginBottom: 8 }} />
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <input value={newTags} onChange={e => setNewTags(e.target.value)} placeholder="Tags (comma-separated): thesis, earnings, supply-chain" style={{ ...S.input, flex: 1 }} />
+            <input value={newSource} onChange={e => setNewSource(e.target.value)} placeholder="Source URL (optional)" style={{ ...S.input, flex: 1 }} />
+          </div>
+          <button onClick={addResearch} style={S.btn}>SAVE RESEARCH</button>
+          <span style={{ color: S.dim, fontSize: 11, marginLeft: 12 }}>Tickers will be auto-detected from content</span>
+        </div>
+      )}
+      {loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
+        research.map(doc => (
+          <div key={doc.id} style={{ ...S.card, cursor: "pointer" }} onClick={() => setExpanded(expanded === doc.id ? null : doc.id)}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <div style={{ color: S.text, fontWeight: "bold", fontSize: 14 }}>{doc.title}</div>
+                <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                  {doc.tickers?.map((t: string) => <span key={t} style={{ color: S.blue, fontSize: 11, background: "rgba(88,166,255,0.1)", padding: "2px 6px", borderRadius: 3 }}>{t}</span>)}
+                  {doc.tags?.map((t: string) => <span key={t} style={{ color: S.muted, fontSize: 11, background: "#1e2733", padding: "2px 6px", borderRadius: 3 }}>{t}</span>)}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ color: S.dim, fontSize: 11 }}>{new Date(doc.created_at).toLocaleDateString()}</div>
+                <div style={{ color: S.dim, fontSize: 11 }}>{doc.word_count} words</div>
+              </div>
+            </div>
+            {expanded === doc.id && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ color: S.text, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, maxHeight: 400, overflowY: "auto",
+                  padding: 12, background: "#0a0e14", borderRadius: 4 }}>{doc.content}</div>
+                <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  {doc.source && <a href={doc.source} target="_blank" rel="noreferrer" style={{ color: S.blue, fontSize: 12 }}>Source ↗</a>}
+                  <button onClick={(e) => { e.stopPropagation(); deleteResearch(doc.id); }} style={S.btnDanger}>DELETE</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))
+      }
+      {!loading && research.length === 0 && (
+        <div style={{ color: S.dim, padding: 40, textAlign: "center" }}>No research yet. Click + ADD DEEP DIVE to start building your library.</div>
+      )}
+    </div>
+  );
+}
+
+function PhotonicsAI() {
+  const [question, setQuestion] = useState("");
+  const [focusTicker, setFocusTicker] = useState("");
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const SAMPLE_QUESTIONS = [
+    "What are the biggest bottleneck risks in our photonics universe?",
+    "Which names are closest to their buy targets right now?",
+    "How would a 30% increase in AI GPU shipments ripple through the supply chain?",
+    "Compare the competitive positioning of COHR vs AAOI in the transceiver market",
+    "What are the leading indicators from substrate companies for downstream demand?",
+    "Summarize the bull and bear case for POET Technologies",
+  ];
+  const ask = async (q?: string) => {
+    const question_text = q || question;
+    if (!question_text) return;
+    setLoading(true);
+    setHistory(prev => [...prev, { role: "user", text: question_text }]);
+    setQuestion("");
+    try {
+      const res = await fetch(`${API}/ai/ask`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: question_text, tickers: focusTicker ? [focusTicker] : [] }) });
+      const data = await res.json();
+      setHistory(prev => [...prev, { role: "ai", text: data.answer, docs: data.research_docs_used }]);
+    } catch (e) {
+      setHistory(prev => [...prev, { role: "ai", text: "Error: Could not reach AI. Check your API key and server." }]);
+    }
+    setLoading(false);
+  };
+  return (
+    <div>
+      <div style={{ color: S.text, fontWeight: "bold", fontSize: 15, marginBottom: 16 }}>AI RESEARCH ANALYST</div>
+      <div style={{ ...S.card, maxHeight: 500, overflowY: "auto", minHeight: 200 }}>
+        {history.length === 0 && <div style={{ color: S.dim, padding: 20, textAlign: "center" }}>Ask me anything about the photonics universe. I will use your stored research + live prices to answer.</div>}
+        {history.map((msg, i) => (
+          <div key={i} style={{ marginBottom: 16, padding: "12px", background: msg.role === "user" ? "rgba(88,166,255,0.05)" : "transparent", borderRadius: 6 }}>
+            <div style={{ color: msg.role === "user" ? S.blue : S.green, fontSize: 11, fontWeight: "bold", marginBottom: 6 }}>
+              {msg.role === "user" ? "YOU" : "ANALYST"} {msg.docs ? `(${msg.docs} docs referenced)` : ""}
+            </div>
+            <div style={{ color: S.text, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{msg.text}</div>
+          </div>
+        ))}
+        {loading && <div style={{ color: S.yellow, padding: 12, fontSize: 13 }}>Analyzing across research library and live data...</div>}
+      </div>
+      {history.length === 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 12, marginBottom: 12 }}>
+          {SAMPLE_QUESTIONS.map((q, i) => (
+            <button key={i} onClick={() => ask(q)} style={{ ...S.btnSmall, fontSize: 11, maxWidth: 300, textAlign: "left" }}>{q}</button>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <select value={focusTicker} onChange={e => setFocusTicker(e.target.value)} style={{ ...S.select, width: 100 }}>
+          <option value="">All</option>
+          {DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <input value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => e.key === "Enter" && ask()}
+          placeholder="Ask about photonics supply chain, tickers, bottlenecks, thesis..." style={{ ...S.input, flex: 1 }} />
+        <button onClick={() => ask()} disabled={loading} style={S.btn}>{loading ? "..." : "ASK"}</button>
+      </div>
+    </div>
+  );
+}
+
+function EarningsWarRoom() {
+  const [earnings, setEarnings] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [filterTicker, setFilterTicker] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [form, setForm] = useState({ ticker: "", quarter: "", date: "", est_revenue: "", est_eps: "", guidance_revenue: "", guidance_eps: "", supply_chain_signals: "", pre_notes: "" });
+  const [postForm, setPostForm] = useState({ actual_revenue: "", actual_eps: "", post_notes: "", key_quotes: "" });
+  const fetchEarnings = async () => {
+    setLoading(true);
+    let url = `${API}/earnings`;
+    if (filterTicker) url += `?ticker=${filterTicker}`;
+    try { const res = await fetch(url); const json = await res.json(); setEarnings(json.earnings || []); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { fetchEarnings(); }, [filterTicker]);
+  const addEarnings = async () => {
+    if (!form.ticker || !form.quarter) return;
+    await fetch(`${API}/earnings`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...form, est_revenue: form.est_revenue ? parseFloat(form.est_revenue) : null, est_eps: form.est_eps ? parseFloat(form.est_eps) : null,
+        guidance_revenue: form.guidance_revenue ? parseFloat(form.guidance_revenue) : null, guidance_eps: form.guidance_eps ? parseFloat(form.guidance_eps) : null }) });
+    setForm({ ticker: "", quarter: "", date: "", est_revenue: "", est_eps: "", guidance_revenue: "", guidance_eps: "", supply_chain_signals: "", pre_notes: "" });
+    setShowAdd(false); fetchEarnings();
+  };
+  const updatePostEarnings = async (id: string) => {
+    await fetch(`${API}/earnings/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actual_revenue: postForm.actual_revenue ? parseFloat(postForm.actual_revenue) : null,
+        actual_eps: postForm.actual_eps ? parseFloat(postForm.actual_eps) : null, post_notes: postForm.post_notes, key_quotes: postForm.key_quotes }) });
+    setPostForm({ actual_revenue: "", actual_eps: "", post_notes: "", key_quotes: "" }); fetchEarnings();
+  };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>EARNINGS WAR ROOM</span>
+          <span style={{ color: S.dim, fontSize: 12, marginLeft: 12 }}>{earnings.length} records</span>
+        </div>
+        <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ PRE-EARNINGS PREP"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <select value={filterTicker} onChange={e => setFilterTicker(e.target.value)} style={S.select}>
+          <option value="">All Tickers</option>
+          {DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {showAdd && (
+        <div style={{ ...S.card, borderColor: S.yellow }}>
+          <div style={{ color: S.yellow, fontWeight: "bold", marginBottom: 12 }}>PRE-EARNINGS PREP SHEET</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div><div style={S.label}>Ticker</div>
+              <select value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                <option value="">Select</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+            <div><div style={S.label}>Quarter</div><input value={form.quarter} onChange={e => setForm({...form, quarter: e.target.value})} placeholder="Q1 2025" style={S.input} /></div>
+            <div><div style={S.label}>Date</div><input value={form.date} onChange={e => setForm({...form, date: e.target.value})} type="date" style={S.input} /></div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div><div style={S.label}>Est Revenue ($M)</div><input value={form.est_revenue} onChange={e => setForm({...form, est_revenue: e.target.value})} style={S.input} /></div>
+            <div><div style={S.label}>Est EPS</div><input value={form.est_eps} onChange={e => setForm({...form, est_eps: e.target.value})} style={S.input} /></div>
+            <div><div style={S.label}>Guidance Rev ($M)</div><input value={form.guidance_revenue} onChange={e => setForm({...form, guidance_revenue: e.target.value})} style={S.input} /></div>
+            <div><div style={S.label}>Guidance EPS</div><input value={form.guidance_eps} onChange={e => setForm({...form, guidance_eps: e.target.value})} style={S.input} /></div>
+          </div>
+          <div style={S.label}>Supply Chain Signals</div>
+          <textarea value={form.supply_chain_signals} onChange={e => setForm({...form, supply_chain_signals: e.target.value})}
+            placeholder="What are upstream/downstream companies signaling?" style={{ ...S.input, height: 60, marginBottom: 8 }} />
+          <div style={S.label}>Pre-Earnings Notes</div>
+          <textarea value={form.pre_notes} onChange={e => setForm({...form, pre_notes: e.target.value})}
+            placeholder="What to watch for, key questions, positioning thoughts..." style={{ ...S.input, height: 60, marginBottom: 8 }} />
+          <button onClick={addEarnings} style={S.btn}>SAVE PREP SHEET</button>
+        </div>
+      )}
+      {loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
+        earnings.map(e => (
+          <div key={e.id} style={{ ...S.card, borderColor: e.beat_miss === "beat" ? S.green : e.beat_miss === "miss" ? S.red : "#1e2733", cursor: "pointer" }}
+            onClick={() => setExpanded(expanded === e.id ? null : e.id)}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <div>
+                <span style={{ color: S.text, fontWeight: "bold" }}>{e.ticker}</span>
+                <span style={{ color: S.dim, marginLeft: 8 }}>{e.name}</span>
+                <span style={{ color: S.muted, marginLeft: 12, fontSize: 12 }}>{e.quarter}</span>
+              </div>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <span style={{ color: S.dim, fontSize: 11 }}>{e.date}</span>
+                {e.beat_miss && <span style={{ color: e.beat_miss === "beat" ? S.green : e.beat_miss === "miss" ? S.red : S.yellow, fontWeight: "bold", fontSize: 12, textTransform: "uppercase" }}>{e.beat_miss}</span>}
+                {!e.actual_revenue && <span style={{ color: S.yellow, fontSize: 11 }}>PENDING</span>}
+              </div>
+            </div>
+            {expanded === e.id && (
+              <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <div style={{ color: S.yellow, fontWeight: "bold", fontSize: 12, marginBottom: 8 }}>PRE-EARNINGS</div>
+                  {e.est_revenue && <div style={{ color: S.text, fontSize: 12 }}>Est Revenue: <span style={{ color: S.blue }}>${e.est_revenue}M</span></div>}
+                  {e.est_eps && <div style={{ color: S.text, fontSize: 12 }}>Est EPS: <span style={{ color: S.blue }}>${e.est_eps}</span></div>}
+                  {e.guidance_revenue && <div style={{ color: S.text, fontSize: 12 }}>Guidance Rev: <span style={{ color: S.cyan }}>${e.guidance_revenue}M</span></div>}
+                  {e.supply_chain_signals && <div style={{ color: S.muted, fontSize: 12, marginTop: 4 }}>Signals: {e.supply_chain_signals}</div>}
+                  {e.pre_notes && <div style={{ color: S.muted, fontSize: 12, marginTop: 4 }}>Notes: {e.pre_notes}</div>}
+                </div>
+                <div>
+                  <div style={{ color: S.green, fontWeight: "bold", fontSize: 12, marginBottom: 8 }}>POST-EARNINGS</div>
+                  {e.actual_revenue ? (
+                    <>
+                      <div style={{ color: S.text, fontSize: 12 }}>Actual Revenue: <span style={{ color: S.green }}>${e.actual_revenue}M</span>
+                        {e.est_revenue && <span style={{ color: e.actual_revenue >= e.est_revenue ? S.green : S.red, marginLeft: 8 }}>
+                          ({e.actual_revenue >= e.est_revenue ? "+" : ""}{((e.actual_revenue - e.est_revenue) / e.est_revenue * 100).toFixed(1)}% vs est)</span>}
+                      </div>
+                      {e.actual_eps && <div style={{ color: S.text, fontSize: 12 }}>Actual EPS: ${e.actual_eps}</div>}
+                      {e.post_notes && <div style={{ color: S.muted, fontSize: 12, marginTop: 4 }}>{e.post_notes}</div>}
+                      {e.key_quotes && <div style={{ color: S.dim, fontSize: 12, marginTop: 4, fontStyle: "italic" }}>{e.key_quotes}</div>}
+                    </>
+                  ) : (
+                    <div>
+                      <div style={{ color: S.dim, fontSize: 12, marginBottom: 8 }}>Earnings not reported yet. Add results below:</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 6 }}>
+                        <input value={postForm.actual_revenue} onChange={ev => setPostForm({...postForm, actual_revenue: ev.target.value})} placeholder="Actual Rev ($M)" style={{ ...S.input, padding: "4px 8px", fontSize: 11 }} />
+                        <input value={postForm.actual_eps} onChange={ev => setPostForm({...postForm, actual_eps: ev.target.value})} placeholder="Actual EPS" style={{ ...S.input, padding: "4px 8px", fontSize: 11 }} />
+                      </div>
+                      <textarea value={postForm.post_notes} onChange={ev => setPostForm({...postForm, post_notes: ev.target.value})} placeholder="Post-earnings notes" style={{ ...S.input, height: 40, fontSize: 11, marginBottom: 6 }} />
+                      <textarea value={postForm.key_quotes} onChange={ev => setPostForm({...postForm, key_quotes: ev.target.value})} placeholder="Key management quotes" style={{ ...S.input, height: 40, fontSize: 11, marginBottom: 6 }} />
+                      <button onClick={(ev) => { ev.stopPropagation(); updatePostEarnings(e.id); }} style={{ ...S.btn, padding: "4px 12px", fontSize: 11 }}>SAVE RESULTS</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        ))
+      }
+      {!loading && earnings.length === 0 && (
+        <div style={{ color: S.dim, padding: 40, textAlign: "center" }}>No earnings records. Click + PRE-EARNINGS PREP before the next report.</div>
+      )}
+    </div>
+  );
+}
+
+function ThesisScorecard() {
+  const [thesis, setThesis] = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [filterTicker, setFilterTicker] = useState("");
+  const [form, setForm] = useState({ ticker: "", thesis_type: "bull", item: "", priority: 1 });
+  const fetchThesis = async () => {
+    setLoading(true);
+    let url = `${API}/thesis`;
+    if (filterTicker) url += `?ticker=${filterTicker}`;
+    try { const res = await fetch(url); const json = await res.json(); setThesis(json.thesis || {}); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { fetchThesis(); }, [filterTicker]);
+  const addItem = async () => {
+    if (!form.ticker || !form.item) return;
+    await fetch(`${API}/thesis`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    setForm({ ticker: "", thesis_type: "bull", item: "", priority: 1 }); setShowAdd(false); fetchThesis();
+  };
+  const updateStatus = async (id: string, status: string) => {
+    await fetch(`${API}/thesis/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }); fetchThesis();
+  };
+  const deleteItem = async (id: string) => {
+    await fetch(`${API}/thesis/${id}`, { method: "DELETE" }); fetchThesis();
+  };
+  const signalColors: Record<string, string> = { "STRONG BUY": S.green, "BUY": "#2ea043", "NEUTRAL": S.yellow, "CAUTION": "#d29922", "AVOID": S.red };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>THESIS SCORECARD</span>
+        <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ ADD THESIS POINT"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <select value={filterTicker} onChange={e => setFilterTicker(e.target.value)} style={S.select}>
+          <option value="">All Tickers</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {showAdd && (
+        <div style={{ ...S.card, borderColor: S.blue }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div><div style={S.label}>Ticker</div>
+              <select value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                <option value="">Select</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+            <div><div style={S.label}>Type</div>
+              <select value={form.thesis_type} onChange={e => setForm({...form, thesis_type: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                <option value="bull">BULL</option><option value="bear">BEAR</option>
+              </select></div>
+            <div><div style={S.label}>Priority</div>
+              <select value={form.priority} onChange={e => setForm({...form, priority: parseInt(e.target.value)})} style={{ ...S.select, width: "100%" }}>
+                <option value={1}>High</option><option value={2}>Medium</option><option value={3}>Low</option>
+              </select></div>
+          </div>
+          <div style={S.label}>Thesis Point</div>
+          <input value={form.item} onChange={e => setForm({...form, item: e.target.value})} onKeyDown={e => e.key === "Enter" && addItem()}
+            placeholder="e.g., 800G ramp will drive 40% revenue growth through 2026" style={{ ...S.input, marginBottom: 8 }} />
+          <button onClick={addItem} style={S.btn}>ADD</button>
+        </div>
+      )}
+      {loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
+        Object.entries(thesis).map(([ticker, data]) => (
+          <div key={ticker} style={S.card}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div>
+                <span style={{ color: S.text, fontWeight: "bold", fontSize: 16 }}>{ticker}</span>
+                <span style={{ color: S.dim, marginLeft: 8, fontSize: 12 }}>{data.name}</span>
+              </div>
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                <span style={{ color: signalColors[data.conviction?.signal] || S.muted, fontWeight: "bold", fontSize: 14 }}>{data.conviction?.signal}</span>
+                <span style={{ color: S.dim, fontSize: 11 }}>Bull: {data.conviction?.bull_score} | Bear: {data.conviction?.bear_score} | Net: {data.conviction?.net_score}</span>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              {(["bull", "bear"] as const).map(type => (
+                <div key={type}>
+                  <div style={{ color: type === "bull" ? S.green : S.red, fontWeight: "bold", fontSize: 12, marginBottom: 8 }}>{type.toUpperCase()} CASE ({data[type].length})</div>
+                  {data[type].map((item: any) => (
+                    <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #1e2733" }}>
+                      <div style={{ color: item.status === "invalidated" ? S.dim : S.text, fontSize: 13,
+                        textDecoration: item.status === "invalidated" ? "line-through" : "none" }}>{item.item}</div>
+                      <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                        {(["active", "confirmed", "invalidated"] as const).map(st => (
+                          <button key={st} onClick={() => updateStatus(item.id, st)}
+                            style={{ ...S.btnSmall, fontSize: 10, background: item.status === st ?
+                              (st === "confirmed" ? S.green : st === "invalidated" ? S.red : "#2a3441") : "#1e2733",
+                              color: item.status === st ? "#fff" : S.dim }}>
+                            {st.toUpperCase()}
+                          </button>
+                        ))}
+                        <button onClick={() => deleteItem(item.id)} style={{ ...S.btnSmall, fontSize: 10, color: S.red }}>×</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))
+      }
+      {!loading && Object.keys(thesis).length === 0 && (
+        <div style={{ color: S.dim, padding: 40, textAlign: "center" }}>No thesis items yet. Build your bull/bear case for each ticker.</div>
+      )}
+    </div>
+  );
+}
+
+function CatalystCalendar() {
+  const [catalysts, setCatalysts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAdd, setShowAdd] = useState(false);
+  const [filterTicker, setFilterTicker] = useState("");
+  const [showPast, setShowPast] = useState(false);
+  const [form, setForm] = useState({ ticker: "", title: "", date: "", catalyst_type: "earnings", importance: "medium", notes: "" });
+  const fetchCatalysts = async () => {
+    setLoading(true);
+    let url = `${API}/catalysts?upcoming_only=${!showPast}`;
+    if (filterTicker) url += `&ticker=${filterTicker}`;
+    try { const res = await fetch(url); const json = await res.json(); setCatalysts(json.catalysts || []); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  useEffect(() => { fetchCatalysts(); }, [filterTicker, showPast]);
+  const addCatalyst = async () => {
+    if (!form.ticker || !form.title || !form.date) return;
+    await fetch(`${API}/catalysts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+    setForm({ ticker: "", title: "", date: "", catalyst_type: "earnings", importance: "medium", notes: "" }); setShowAdd(false); fetchCatalysts();
+  };
+  const deleteCatalyst = async (id: string) => {
+    await fetch(`${API}/catalysts/${id}`, { method: "DELETE" }); fetchCatalysts();
+  };
+  const typeIcons: Record<string, string> = { earnings: "📊", product_launch: "🚀", conference: "🎤", capacity: "🏭", regulatory: "⚖️", other: "📌" };
+  const importanceColors: Record<string, string> = { critical: S.red, high: "#d29922", medium: S.blue, low: S.dim };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>CATALYST CALENDAR</span>
+        <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ ADD CATALYST"}</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        <select value={filterTicker} onChange={e => setFilterTicker(e.target.value)} style={S.select}>
+          <option value="">All Tickers</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <button onClick={() => setShowPast(!showPast)} style={{ ...S.btnSmall, background: showPast ? "#1a8c5e" : "#2a3441" }}>
+          {showPast ? "SHOWING ALL" : "UPCOMING ONLY"}
+        </button>
+      </div>
+      {showAdd && (
+        <div style={{ ...S.card, borderColor: S.yellow }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div><div style={S.label}>Ticker</div>
+              <select value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                <option value="">Select</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+            <div><div style={S.label}>Date</div><input value={form.date} onChange={e => setForm({...form, date: e.target.value})} type="date" style={S.input} /></div>
+            <div><div style={S.label}>Type</div>
+              <select value={form.catalyst_type} onChange={e => setForm({...form, catalyst_type: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                {Object.keys(typeIcons).map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
+            <div><div style={S.label}>Importance</div>
+              <select value={form.importance} onChange={e => setForm({...form, importance: e.target.value})} style={{ ...S.select, width: "100%" }}>
+                <option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option>
+              </select></div>
+          </div>
+          <div style={S.label}>Title</div>
+          <input value={form.title} onChange={e => setForm({...form, title: e.target.value})} placeholder="e.g., COHR Q2 Earnings Report" style={{ ...S.input, marginBottom: 8 }} />
+          <div style={S.label}>Notes</div>
+          <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} placeholder="What to watch for..."
+            style={{ ...S.input, height: 60, marginBottom: 8 }} />
+          <button onClick={addCatalyst} style={S.btn}>ADD CATALYST</button>
+        </div>
+      )}
+      {loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
+        catalysts.map(c => {
+          const daysAway = Math.ceil((new Date(c.date).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+          const isToday = daysAway === 0;
+          const isSoon = daysAway > 0 && daysAway <= 7;
+          return (
+            <div key={c.id} style={{ ...S.card, borderLeft: `3px solid ${importanceColors[c.importance] || S.dim}`,
+              background: isToday ? "rgba(210,153,34,0.05)" : "#0d1117" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 16 }}>{typeIcons[c.catalyst_type] || "📌"}</span>
+                    <span style={{ color: S.blue, fontWeight: "bold" }}>{c.ticker}</span>
+                    <span style={{ color: S.text, fontWeight: "bold" }}>{c.title}</span>
+                  </div>
+                  {c.notes && <div style={{ color: S.muted, fontSize: 12, marginTop: 4, marginLeft: 28 }}>{c.notes}</div>}
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ color: S.text, fontSize: 13 }}>{c.date}</div>
+                  <div style={{ color: isToday ? S.yellow : isSoon ? "#d29922" : S.dim, fontSize: 11, fontWeight: isToday ? "bold" : "normal" }}>
+                    {isToday ? "TODAY" : daysAway > 0 ? `${daysAway}d away` : `${Math.abs(daysAway)}d ago`}
+                  </div>
+                  <button onClick={() => deleteCatalyst(c.id)} style={{ ...S.btnSmall, marginTop: 4, color: S.red, fontSize: 10 }}>×</button>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      }
+      {!loading && catalysts.length === 0 && (
+        <div style={{ color: S.dim, padding: 40, textAlign: "center" }}>No catalysts found. Add earnings dates, product launches, conferences, and more.</div>
+      )}
+    </div>
+  );
+}
+
+
+function TechnicalScanner() {
+  const [scan, setScan] = useState<any[]>([]);
+  const [heatmap, setHeatmap] = useState<any[]>([]);
+  const [correlations, setCorrelations] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"scanner"|"heatmap"|"correlations">("scanner");
+  const [detail, setDetail] = useState<any>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const API = "http://localhost:8001/photonics/technicals";
+
+  const fetchScan = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/scan`); const json = await res.json(); setScan(json.scan || []); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  const fetchHeatmap = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/heatmap`); const json = await res.json(); setHeatmap(json.heatmap || []); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  const fetchCorrelations = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/correlations`); setCorrelations(await res.json()); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  const fetchDetail = async (ticker: string) => {
+    setDetailLoading(true);
+    try { const res = await fetch(`${API}/detail/${ticker}`); setDetail(await res.json()); }
+    catch (e) { console.error(e); }
+    setDetailLoading(false);
+  };
+
+  useEffect(() => { fetchScan(); }, []);
+
+  const switchView = (v: "scanner"|"heatmap"|"correlations") => {
+    setView(v); setDetail(null);
+    if (v === "scanner") fetchScan();
+    else if (v === "heatmap") fetchHeatmap();
+    else fetchCorrelations();
+  };
+
+  const signalColor = (sig: string) => {
+    const m: Record<string, string> = {
+      "STRONG BUY": "#2ea043", "BUY": "#2ea043", "BULLISH": "#2ea043",
+      "STRONG UPTREND": "#2ea043", "UPTREND": "#58a6ff",
+      "NEUTRAL": "#d29922", "MIXED": "#d29922", "RECOVERING": "#d29922",
+      "SELL": "#f85149", "STRONG SELL": "#f85149", "BEARISH": "#f85149",
+      "DOWNTREND": "#f85149", "OVERBOUGHT": "#d29922", "OVERSOLD": "#2ea043",
+      "WEAKENING": "#d29922",
+    };
+    return m[sig] || "#7d8590";
+  };
+  const pctColor = (v: number | null) => v === null ? "#484f58" : v >= 0 ? "#2ea043" : "#f85149";
+  const scoreBar = (score: number) => {
+    const clr = score >= 70 ? "#2ea043" : score >= 50 ? "#58a6ff" : score >= 30 ? "#d29922" : "#f85149";
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 60, height: 6, background: "#1e2733", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${score}%`, height: "100%", background: clr, borderRadius: 3 }}/>
+        </div>
+        <span style={{ color: clr, fontSize: 11, fontWeight: "bold" }}>{score}</span>
+      </div>
+    );
+  };
+
+  const S: Record<string, any> = {
+    card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 },
+    btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 13, fontWeight: "bold" },
+    btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 11 },
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15 }}>TECHNICAL SCANNER</span>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["scanner","heatmap","correlations"] as const).map(v => (
+            <button key={v} onClick={() => switchView(v)}
+              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#2a3441", color: view === v ? "#fff" : "#aaa" }}>
+              {v === "scanner" ? "📊 SCANNER" : v === "heatmap" ? "🔥 HEATMAP" : "🔗 CORRELATIONS"}
+            </button>
+          ))}
+          <button onClick={() => { if (view === "scanner") fetchScan(); else if (view === "heatmap") fetchHeatmap(); else fetchCorrelations(); }}
+            style={S.btnSmall}>↻ REFRESH</button>
+        </div>
+      </div>
+
+      {loading ? <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Scanning 19 tickers... (this takes ~30s on first load)</div> : (
+        <>
+          {/* ── SCANNER VIEW ── */}
+          {view === "scanner" && (
+            <div>
+              {detail ? (
+                <div>
+                  <button onClick={() => setDetail(null)} style={{ ...S.btnSmall, marginBottom: 12 }}>← Back to Scanner</button>
+                  {detailLoading ? <div style={{ color: "#7d8590", padding: 20 }}>Loading detail...</div> : (
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                        <div>
+                          <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 22 }}>{detail.ticker}</span>
+                          <span style={{ color: "#e6edf3", fontSize: 22, marginLeft: 12 }}>${detail.price}</span>
+                          <span style={{ color: signalColor(detail.composite_signal), fontSize: 14, marginLeft: 12, fontWeight: "bold" }}>
+                            {detail.composite_signal} ({detail.composite_score}/100)
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+                        <div style={S.card}>
+                          <div style={{ color: "#7d8590", fontSize: 11, letterSpacing: 1 }}>RSI (14)</div>
+                          <div style={{ fontSize: 24, fontWeight: "bold", color: signalColor(detail.rsi_signal) }}>{detail.rsi || "—"}</div>
+                          <div style={{ color: signalColor(detail.rsi_signal), fontSize: 12 }}>{detail.rsi_signal}</div>
+                        </div>
+                        <div style={S.card}>
+                          <div style={{ color: "#7d8590", fontSize: 11, letterSpacing: 1 }}>MACD</div>
+                          <div style={{ fontSize: 24, fontWeight: "bold", color: signalColor(detail.macd_signal) }}>{detail.macd_histogram || "—"}</div>
+                          <div style={{ color: signalColor(detail.macd_signal), fontSize: 12 }}>{detail.macd_signal}</div>
+                        </div>
+                        <div style={S.card}>
+                          <div style={{ color: "#7d8590", fontSize: 11, letterSpacing: 1 }}>TREND</div>
+                          <div style={{ fontSize: 16, fontWeight: "bold", color: signalColor(detail.sma_trend), marginTop: 4 }}>{detail.sma_trend}</div>
+                          <div style={{ color: "#484f58", fontSize: 11, marginTop: 4 }}>SMA 20/50/200</div>
+                        </div>
+                        <div style={S.card}>
+                          <div style={{ color: "#7d8590", fontSize: 11, letterSpacing: 1 }}>VOLUME</div>
+                          <div style={{ fontSize: 24, fontWeight: "bold", color: detail.vol_ratio > 1.3 ? "#58a6ff" : "#7d8590" }}>{detail.vol_ratio}x</div>
+                          <div style={{ color: "#484f58", fontSize: 11 }}>vs 20d avg</div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                        <div style={S.card}>
+                          <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>MOVING AVERAGES</div>
+                          {[{l:"SMA 20",v:detail.sma20},{l:"SMA 50",v:detail.sma50},{l:"SMA 200",v:detail.sma200}].map(s => (
+                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+                              <span style={{ color: "#7d8590", fontSize: 12 }}>{s.l}</span>
+                              <div>
+                                <span style={{ color: "#e6edf3", fontSize: 12 }}>${s.v || "—"}</span>
+                                {s.v && <span style={{ color: detail.price > s.v ? "#2ea043" : "#f85149", fontSize: 11, marginLeft: 8 }}>
+                                  {detail.price > s.v ? "ABOVE" : "BELOW"}
+                                </span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={S.card}>
+                          <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>PRICE LEVELS</div>
+                          {[
+                            {l:"52W High",v:detail.high_52w,note:`${detail.pct_from_high}%`},
+                            {l:"52W Low",v:detail.low_52w},
+                            {l:"20D High",v:detail.recent_high},
+                            {l:"20D Low",v:detail.recent_low},
+                          ].map(s => (
+                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+                              <span style={{ color: "#7d8590", fontSize: 12 }}>{s.l}</span>
+                              <div>
+                                <span style={{ color: "#e6edf3", fontSize: 12 }}>${s.v || "—"}</span>
+                                {s.note && <span style={{ color: "#f85149", fontSize: 11, marginLeft: 8 }}>{s.note}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {detail.price_history && detail.price_history.length > 0 && (
+                        <div style={S.card}>
+                          <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>60-DAY PRICE CHART</div>
+                          <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 120 }}>
+                            {(() => {
+                              const prices = detail.price_history.map((p: any) => p.close);
+                              const min = Math.min(...prices);
+                              const max = Math.max(...prices);
+                              const range = max - min || 1;
+                              return detail.price_history.map((p: any, i: number) => {
+                                const h = ((p.close - min) / range) * 100 + 10;
+                                const prev = i > 0 ? detail.price_history[i-1].close : p.close;
+                                return (
+                                  <div key={i} title={`${p.date}: $${p.close}`}
+                                    style={{ flex: 1, height: h, background: p.close >= prev ? "#2ea04380" : "#f8514980",
+                                      borderRadius: "2px 2px 0 0", minWidth: 2 }} />
+                                );
+                              });
+                            })()}
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                            <span style={{ color: "#484f58", fontSize: 10 }}>{detail.price_history[0]?.date}</span>
+                            <span style={{ color: "#484f58", fontSize: 10 }}>{detail.price_history[detail.price_history.length-1]?.date}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                        {["TICKER","PRICE","CHG%","SCORE","SIGNAL","RSI","MACD","TREND","VOL"].map(h => (
+                          <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#7d8590", fontSize: 10, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scan.map((s: any) => s.error ? null : (
+                        <tr key={s.ticker} onClick={() => fetchDetail(s.ticker)}
+                          style={{ borderBottom: "1px solid #1e2733", cursor: "pointer", transition: "background 0.15s" }}
+                          onMouseOver={e => (e.currentTarget.style.background = "rgba(88,166,255,0.03)")}
+                          onMouseOut={e => (e.currentTarget.style.background = "transparent")}>
+                          <td style={{ padding: "10px", color: "#e6edf3", fontWeight: "bold" }}>{s.ticker}</td>
+                          <td style={{ padding: "10px", color: "#e6edf3" }}>${s.price}</td>
+                          <td style={{ padding: "10px", color: pctColor(s.change_pct), fontWeight: "bold" }}>
+                            {s.change_pct >= 0 ? "+" : ""}{s.change_pct}%
+                          </td>
+                          <td style={{ padding: "10px" }}>{scoreBar(s.composite_score)}</td>
+                          <td style={{ padding: "10px", color: signalColor(s.composite_signal), fontWeight: "bold", fontSize: 11 }}>
+                            {s.composite_signal}
+                          </td>
+                          <td style={{ padding: "10px" }}>
+                            <span style={{ color: signalColor(s.rsi_signal) }}>{s.rsi}</span>
+                            <span style={{ color: "#484f58", fontSize: 10, marginLeft: 4 }}>{s.rsi_signal}</span>
+                          </td>
+                          <td style={{ padding: "10px" }}>
+                            <span style={{ color: signalColor(s.macd_signal), fontSize: 11 }}>{s.macd_signal}</span>
+                          </td>
+                          <td style={{ padding: "10px", color: signalColor(s.sma_trend), fontSize: 11 }}>{s.sma_trend}</td>
+                          <td style={{ padding: "10px", color: s.vol_ratio > 1.5 ? "#58a6ff" : "#484f58", fontSize: 11 }}>
+                            {s.vol_ratio}x
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div style={{ color: "#484f58", fontSize: 10, marginTop: 8 }}>Click any row for detailed analysis · Sorted by composite technical score</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── HEATMAP VIEW ── */}
+          {view === "heatmap" && (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120, 1fr))", gap: 8 }}>
+                {heatmap.map((h: any) => {
+                  const val = h.m1 ?? h.w1 ?? h.d1 ?? 0;
+                  const intensity = Math.min(Math.abs(val) / 20, 1);
+                  const bg = val >= 0 ? `rgba(46, 160, 67, ${intensity * 0.3 + 0.05})` : `rgba(248, 81, 73, ${intensity * 0.3 + 0.05})`;
+                  return (
+                    <div key={h.ticker} style={{ background: bg, border: "1px solid #1e2733", borderRadius: 6, padding: 12, textAlign: "center" }}>
+                      <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 14 }}>{h.ticker}</div>
+                      <div style={{ color: "#e6edf3", fontSize: 12 }}>${h.price}</div>
+                      <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 10 }}>
+                        <div><span style={{ color: "#7d8590" }}>1D </span><span style={{ color: pctColor(h.d1) }}>{h.d1 !== null ? `${h.d1 > 0?"+":""}${h.d1}%` : "—"}</span></div>
+                        <div><span style={{ color: "#7d8590" }}>1W </span><span style={{ color: pctColor(h.w1) }}>{h.w1 !== null ? `${h.w1 > 0?"+":""}${h.w1}%` : "—"}</span></div>
+                        <div><span style={{ color: "#7d8590" }}>1M </span><span style={{ color: pctColor(h.m1) }}>{h.m1 !== null ? `${h.m1 > 0?"+":""}${h.m1}%` : "—"}</span></div>
+                        <div><span style={{ color: "#7d8590" }}>3M </span><span style={{ color: pctColor(h.m3) }}>{h.m3 !== null ? `${h.m3 > 0?"+":""}${h.m3}%` : "—"}</span></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ color: "#484f58", fontSize: 10, marginTop: 8 }}>Color intensity = 1M performance magnitude · Green = positive, Red = negative</div>
+            </div>
+          )}
+
+          {/* ── CORRELATIONS VIEW ── */}
+          {view === "correlations" && correlations && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>MOST CORRELATED PAIRS</div>
+                <div style={{ color: "#484f58", fontSize: 11, marginBottom: 8 }}>Move together — diversification risk</div>
+                {correlations.top_correlated?.map((p: any, i: number) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+                    <span style={{ color: "#e6edf3", fontSize: 12 }}>{p.ticker1} ↔ {p.ticker2}</span>
+                    <span style={{ color: p.correlation > 0.7 ? "#f85149" : p.correlation > 0.5 ? "#d29922" : "#7d8590", fontWeight: "bold", fontSize: 12 }}>
+                      {p.correlation}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>LEAST CORRELATED PAIRS</div>
+                <div style={{ color: "#484f58", fontSize: 11, marginBottom: 8 }}>Move independently — best diversifiers</div>
+                {correlations.least_correlated?.map((p: any, i: number) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+                    <span style={{ color: "#e6edf3", fontSize: 12 }}>{p.ticker1} ↔ {p.ticker2}</span>
+                    <span style={{ color: Math.abs(p.correlation) < 0.2 ? "#2ea043" : "#58a6ff", fontWeight: "bold", fontSize: 12 }}>
+                      {p.correlation}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ gridColumn: "span 2", color: "#484f58", fontSize: 10 }}>Based on 30-day daily returns · Updated: {correlations.updated_at ? new Date(correlations.updated_at).toLocaleString() : "—"}</div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+function PortfolioOverlay() {
+  const [data, setData] = useState<any>(null);
+  const [gaps, setGaps] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState<"positions"|"gaps"|"add">("positions");
+  const [addForm, setAddForm] = useState({ ticker: "", shares: "", avg_cost: "", account: "Individual", notes: "" });
+  const [addStatus, setAddStatus] = useState("");
+
+  const API = "http://localhost:8001/photonics/portfolio";
+
+  const fetchPositions = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/positions`); setData(await res.json()); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  const fetchGaps = async () => {
+    setLoading(true);
+    try { const res = await fetch(`${API}/gaps`); setGaps(await res.json()); }
+    catch (e) { console.error(e); }
+    setLoading(false);
+  };
+  const addPosition = async () => {
+    if (!addForm.ticker || !addForm.shares || !addForm.avg_cost) return;
+    try {
+      const res = await fetch(`${API}/positions`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: addForm.ticker.toUpperCase(), shares: parseFloat(addForm.shares), avg_cost: parseFloat(addForm.avg_cost), account: addForm.account, notes: addForm.notes }),
+      });
+      const json = await res.json();
+      setAddStatus(`✅ ${json.status}: ${addForm.ticker.toUpperCase()}`);
+      setAddForm({ ticker: "", shares: "", avg_cost: "", account: "Individual", notes: "" });
+      fetchPositions();
+    } catch (e) { setAddStatus("❌ Error adding position"); }
+  };
+  const deletePosition = async (ticker: string, account: string) => {
+    try {
+      await fetch(`${API}/positions/${ticker}?account=${encodeURIComponent(account)}`, { method: "DELETE" });
+      fetchPositions();
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { fetchPositions(); }, []);
+
+  const switchView = (v: "positions"|"gaps"|"add") => {
+    setView(v);
+    if (v === "positions") fetchPositions();
+    else if (v === "gaps") fetchGaps();
+  };
+
+  const pctColor = (v: number | null) => v === null ? "#484f58" : v >= 0 ? "#2ea043" : "#f85149";
+  const zoneColor = (z: string) => {
+    if (z?.includes("BUY")) return "#2ea043";
+    if (z?.includes("NEAR")) return "#58a6ff";
+    if (z?.includes("HOLD")) return "#d29922";
+    if (z?.includes("TRIM") || z?.includes("EXTENDED")) return "#f85149";
+    return "#7d8590";
+  };
+
+  const S: Record<string, any> = {
+    card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 },
+    metricBox: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 14, textAlign: "center" as const },
+    input: { padding: "8px 12px", background: "#0d1117", border: "1px solid #2a3441", borderRadius: 4, color: "#e6edf3", fontFamily: "monospace", fontSize: 13, width: "100%" },
+    btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 13, fontWeight: "bold" },
+    btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 11 },
+  };
+
+  const fmt = (n: number) => n >= 1000 ? `$${(n/1000).toFixed(1)}k` : `$${n.toFixed(0)}`;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15 }}>PORTFOLIO OVERLAY</span>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["positions","gaps","add"] as const).map(v => (
+            <button key={v} onClick={() => switchView(v)}
+              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#2a3441", color: view === v ? "#fff" : "#aaa" }}>
+              {v === "positions" ? "💼 POSITIONS" : v === "gaps" ? "🎯 TARGET GAPS" : "➕ ADD"}
+            </button>
+          ))}
+          <button onClick={fetchPositions} style={S.btnSmall}>↻ REFRESH</button>
+        </div>
+      </div>
+
+      {loading ? <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Loading portfolio...</div> : (
+        <>
+          {/* ── POSITIONS VIEW ── */}
+          {view === "positions" && data && (
+            <div>
+              {/* Summary cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+                <div style={S.metricBox}>
+                  <div style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>TOTAL VALUE</div>
+                  <div style={{ color: "#e6edf3", fontSize: 20, fontWeight: "bold", marginTop: 4 }}>{fmt(data.summary?.total_value || 0)}</div>
+                </div>
+                <div style={S.metricBox}>
+                  <div style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>TOTAL P&L</div>
+                  <div style={{ color: pctColor(data.summary?.total_pnl), fontSize: 20, fontWeight: "bold", marginTop: 4 }}>
+                    {data.summary?.total_pnl >= 0 ? "+" : ""}{fmt(data.summary?.total_pnl || 0)}
+                  </div>
+                  <div style={{ color: pctColor(data.summary?.total_pnl_pct), fontSize: 11 }}>
+                    {data.summary?.total_pnl_pct >= 0 ? "+" : ""}{data.summary?.total_pnl_pct}%
+                  </div>
+                </div>
+                <div style={S.metricBox}>
+                  <div style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>PHOTONICS</div>
+                  <div style={{ color: "#58a6ff", fontSize: 20, fontWeight: "bold", marginTop: 4 }}>{fmt(data.summary?.photonics_value || 0)}</div>
+                  <div style={{ color: "#58a6ff", fontSize: 11 }}>{data.summary?.photonics_pct}% of portfolio</div>
+                </div>
+                <div style={S.metricBox}>
+                  <div style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>NON-PHOTONICS</div>
+                  <div style={{ color: "#7d8590", fontSize: 20, fontWeight: "bold", marginTop: 4 }}>{fmt(data.summary?.non_photonics_value || 0)}</div>
+                </div>
+                <div style={S.metricBox}>
+                  <div style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>POSITIONS</div>
+                  <div style={{ color: "#e6edf3", fontSize: 20, fontWeight: "bold", marginTop: 4 }}>{data.summary?.position_count || 0}</div>
+                </div>
+              </div>
+
+              {/* Account breakdown */}
+              {data.by_account && Object.keys(data.by_account).length > 1 && (
+                <div style={{ ...S.card, marginBottom: 16 }}>
+                  <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>BY ACCOUNT</div>
+                  <div style={{ display: "flex", gap: 16 }}>
+                    {Object.entries(data.by_account).map(([acct, info]: [string, any]) => (
+                      <div key={acct} style={{ flex: 1, padding: "8px 12px", background: "#161b22", borderRadius: 4 }}>
+                        <div style={{ color: "#58a6ff", fontSize: 12, fontWeight: "bold" }}>{acct}</div>
+                        <div style={{ color: "#e6edf3", fontSize: 14 }}>{fmt(info.value)}</div>
+                        <div style={{ color: pctColor(info.pnl), fontSize: 11 }}>
+                          P&L: {info.pnl >= 0 ? "+" : ""}{fmt(info.pnl)} · {info.count} positions
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Positions table */}
+              {data.positions?.length > 0 ? (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                        {["","TICKER","ACCT","SHARES","AVG COST","PRICE","VALUE","P&L","P&L%","TARGET","GAP%","ZONE",""].map(h => (
+                          <th key={h} style={{ padding: "8px 8px", textAlign: "left", color: "#7d8590", fontSize: 10, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.positions.map((p: any, i: number) => (
+                        <tr key={i} style={{ borderBottom: "1px solid #1e2733", background: p.in_photonics_universe ? "rgba(88,166,255,0.02)" : "transparent" }}>
+                          <td style={{ padding: "8px 6px" }}>
+                            {p.in_photonics_universe && <span title="In photonics universe" style={{ fontSize: 10 }}>🔬</span>}
+                          </td>
+                          <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{p.ticker}</td>
+                          <td style={{ padding: "8px", color: "#7d8590", fontSize: 10 }}>{p.account}</td>
+                          <td style={{ padding: "8px", color: "#e6edf3" }}>{p.shares}</td>
+                          <td style={{ padding: "8px", color: "#7d8590" }}>${p.avg_cost?.toFixed(2)}</td>
+                          <td style={{ padding: "8px", color: "#e6edf3" }}>${p.price?.toFixed(2)}</td>
+                          <td style={{ padding: "8px", color: "#e6edf3" }}>{fmt(p.market_value)}</td>
+                          <td style={{ padding: "8px", color: pctColor(p.pnl), fontWeight: "bold" }}>
+                            {p.pnl >= 0 ? "+" : ""}{fmt(p.pnl)}
+                          </td>
+                          <td style={{ padding: "8px", color: pctColor(p.pnl_pct), fontWeight: "bold" }}>
+                            {p.pnl_pct >= 0 ? "+" : ""}{p.pnl_pct}%
+                          </td>
+                          <td style={{ padding: "8px", color: p.buy_target ? "#58a6ff" : "#484f58" }}>
+                            {p.buy_target ? `$${p.buy_target}` : "—"}
+                          </td>
+                          <td style={{ padding: "8px", color: pctColor(p.target_gap_pct) }}>
+                            {p.target_gap_pct !== null ? `${p.target_gap_pct > 0 ? "+" : ""}${p.target_gap_pct}%` : "—"}
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            {p.position_vs_target && (
+                              <span style={{ color: zoneColor(p.position_vs_target), fontSize: 10, fontWeight: "bold" }}>
+                                {p.position_vs_target}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: "8px" }}>
+                            <button onClick={() => deletePosition(p.ticker, p.account)}
+                              style={{ ...S.btnSmall, background: "transparent", color: "#484f58", fontSize: 10 }}>✕</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ ...S.card, textAlign: "center", padding: 40 }}>
+                  <div style={{ color: "#7d8590", fontSize: 14, marginBottom: 12 }}>No positions loaded yet</div>
+                  <div style={{ color: "#484f58", fontSize: 12, marginBottom: 16 }}>Add positions manually or import from Fidelity CSV</div>
+                  <button onClick={() => switchView("add")} style={S.btn}>➕ Add Positions</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── TARGET GAPS VIEW ── */}
+          {view === "gaps" && gaps && (
+            <div>
+              {gaps.best_opportunities?.length > 0 && (
+                <div style={{ ...S.card, marginBottom: 16 }}>
+                  <div style={{ color: "#2ea043", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>🎯 BEST OPPORTUNITIES — Not Yet Owned, {'>'} 5% Upside to Target</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8 }}>
+                    {gaps.best_opportunities.map((o: any) => (
+                      <div key={o.ticker} style={{ background: "#0a1a0d", border: "1px solid #1a3a1f", borderRadius: 6, padding: 12, textAlign: "center" }}>
+                        <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 16 }}>{o.ticker}</div>
+                        <div style={{ color: "#e6edf3", fontSize: 12 }}>${o.price} → <span style={{ color: "#2ea043" }}>${o.buy_target}</span></div>
+                        <div style={{ color: "#2ea043", fontSize: 18, fontWeight: "bold", marginTop: 4 }}>+{o.gap_pct}%</div>
+                        <div style={{ color: zoneColor(o.zone), fontSize: 10, fontWeight: "bold", marginTop: 2 }}>{o.zone}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {gaps.existing_with_upside?.length > 0 && (
+                <div style={{ ...S.card, marginBottom: 16 }}>
+                  <div style={{ color: "#58a6ff", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>📈 EXISTING POSITIONS — Room to Add, {'>'} 5% Below Target</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8 }}>
+                    {gaps.existing_with_upside.map((o: any) => (
+                      <div key={o.ticker} style={{ background: "#0a1520", border: "1px solid #1a2a3f", borderRadius: 6, padding: 12, textAlign: "center" }}>
+                        <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 16 }}>{o.ticker}</div>
+                        <div style={{ color: "#e6edf3", fontSize: 12 }}>${o.price} → <span style={{ color: "#58a6ff" }}>${o.buy_target}</span></div>
+                        <div style={{ color: "#58a6ff", fontSize: 18, fontWeight: "bold", marginTop: 4 }}>+{o.gap_pct}%</div>
+                        <div style={{ color: "#2ea043", fontSize: 10, fontWeight: "bold", marginTop: 2 }}>OWNED — ADD MORE</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ALL 19 TICKERS — Price vs Target</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                      {["TICKER","PRICE","TARGET","GAP $","GAP %","OWNED","ZONE"].map(h => (
+                        <th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gaps.opportunities?.map((o: any) => (
+                      <tr key={o.ticker} style={{ borderBottom: "1px solid #1e2733" }}>
+                        <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{o.ticker}</td>
+                        <td style={{ padding: "8px", color: "#e6edf3" }}>${o.price}</td>
+                        <td style={{ padding: "8px", color: "#58a6ff" }}>${o.buy_target}</td>
+                        <td style={{ padding: "8px", color: pctColor(o.gap_dollars) }}>
+                          {o.gap_dollars >= 0 ? "+" : ""}${Math.abs(o.gap_dollars)}
+                        </td>
+                        <td style={{ padding: "8px", color: pctColor(o.gap_pct), fontWeight: "bold" }}>
+                          {o.gap_pct >= 0 ? "+" : ""}{o.gap_pct}%
+                        </td>
+                        <td style={{ padding: "8px" }}>
+                          {o.owned ? <span style={{ color: "#2ea043", fontSize: 10 }}>✓ YES</span> : <span style={{ color: "#484f58", fontSize: 10 }}>—</span>}
+                        </td>
+                        <td style={{ padding: "8px", color: zoneColor(o.zone), fontSize: 10, fontWeight: "bold" }}>{o.zone}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* ── ADD VIEW ── */}
+          {view === "add" && (
+            <div>
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 16 }}>ADD POSITION</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                  <div>
+                    <div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>TICKER</div>
+                    <input style={S.input} placeholder="AAOI" value={addForm.ticker}
+                      onChange={e => setAddForm({...addForm, ticker: e.target.value})} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>SHARES</div>
+                    <input style={S.input} placeholder="100" type="number" value={addForm.shares}
+                      onChange={e => setAddForm({...addForm, shares: e.target.value})} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>AVG COST</div>
+                    <input style={S.input} placeholder="25.50" type="number" step="0.01" value={addForm.avg_cost}
+                      onChange={e => setAddForm({...addForm, avg_cost: e.target.value})} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>ACCOUNT</div>
+                    <select style={S.input} value={addForm.account}
+                      onChange={e => setAddForm({...addForm, account: e.target.value})}>
+                      <option>Individual</option>
+                      <option>Roth IRA</option>
+                      <option>Traditional IRA</option>
+                      <option>401k</option>
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <button onClick={addPosition} style={S.btn}>Add Position</button>
+                  {addStatus && <span style={{ color: addStatus.includes("✅") ? "#2ea043" : "#f85149", fontSize: 12 }}>{addStatus}</span>}
+                </div>
+              </div>
+
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>QUICK ADD — PHOTONICS UNIVERSE</div>
+                <div style={{ color: "#484f58", fontSize: 11, marginBottom: 12 }}>Click a ticker to prefill, then enter shares and cost basis</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"].map(t => (
+                    <button key={t} onClick={() => setAddForm({...addForm, ticker: t})}
+                      style={{ ...S.btnSmall, background: addForm.ticker === t ? "#1a8c5e" : "#161b22", color: addForm.ticker === t ? "#fff" : "#7d8590", border: "1px solid #2a3441" }}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={S.card}>
+                <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>IMPORT FROM FIDELITY CSV</div>
+                <div style={{ color: "#484f58", fontSize: 11, marginBottom: 12 }}>
+                  Export from Fidelity → Positions → Download → Upload CSV here
+                </div>
+                <div style={{ color: "#7d8590", fontSize: 11, padding: 16, background: "#161b22", borderRadius: 4, textAlign: "center" }}>
+                  CSV import available via API: <code style={{ color: "#58a6ff" }}>POST /photonics/portfolio/import/fidelity</code>
+                  <br/><span style={{ fontSize: 10, color: "#484f58" }}>curl -X POST http://localhost:8001/photonics/portfolio/import/fidelity -F "file=@positions.csv"</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+
+function RelativeStrength() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const API = "http://localhost:8001/photonics/advanced";
+  useEffect(() => { (async () => { setLoading(true); try { const res = await fetch(`${API}/relative-strength`); setData(await res.json()); } catch (e) { console.error(e); } setLoading(false); })(); }, []);
+  const pctColor = (v: number | null | undefined) => v == null ? "#484f58" : v >= 0 ? "#2ea043" : "#f85149";
+  const S = { card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 } };
+  if (loading) return <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Scanning relative strength... (~30s)</div>;
+  if (!data) return <div style={{ color: "#f85149", padding: 20 }}>Error loading</div>;
+  return (
+    <div>
+      <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15, marginBottom: 16 }}>RELATIVE STRENGTH ANALYZER</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={{ ...S.card, borderColor: "#58a6ff" }}>
+          <div style={{ color: "#58a6ff", fontSize: 11, letterSpacing: 1 }}>PHOTONICS SECTOR AVG</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 8 }}>
+            {Object.entries(data.sector_average || {}).map(([k, v]: any) => (
+              <div key={k}><span style={{ color: "#7d8590", fontSize: 10 }}>{k} </span><span style={{ color: pctColor(v), fontSize: 13, fontWeight: "bold" }}>{v > 0 ? "+" : ""}{v}%</span></div>
+            ))}
+          </div>
+        </div>
+        {Object.entries(data.benchmarks || {}).map(([sym, info]: any) => (
+          <div key={sym} style={S.card}>
+            <div style={{ color: "#7d8590", fontSize: 11 }}>{info.name}</div>
+            <div style={{ color: "#e6edf3", fontSize: 14, fontWeight: "bold" }}>{sym} ${info.price}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, marginTop: 6 }}>
+              {Object.entries(info.returns || {}).map(([k, v]: any) => (
+                <div key={k}><span style={{ color: "#7d8590", fontSize: 10 }}>{k} </span><span style={{ color: pctColor(v), fontSize: 12 }}>{v > 0 ? "+" : ""}{v}%</span></div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <div style={S.card}>
+          <div style={{ color: "#2ea043", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>🏆 LEADERS (1M RS vs SPY)</div>
+          {data.leaders?.map((t: any) => (
+            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+              <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</span>
+              <div><span style={{ color: pctColor(t.returns?.["1M"]), fontSize: 12 }}>{t.returns?.["1M"] > 0 ? "+" : ""}{t.returns?.["1M"]}%</span><span style={{ color: "#2ea043", fontSize: 11, marginLeft: 8 }}>RS: +{t.rs_vs_spy?.["1M"]}%</span></div>
+            </div>
+          ))}
+        </div>
+        <div style={S.card}>
+          <div style={{ color: "#f85149", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>📉 LAGGARDS</div>
+          {data.laggards?.map((t: any) => (
+            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e2733" }}>
+              <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</span>
+              <div><span style={{ color: pctColor(t.returns?.["1M"]), fontSize: 12 }}>{t.returns?.["1M"] > 0 ? "+" : ""}{t.returns?.["1M"]}%</span><span style={{ color: "#f85149", fontSize: 11, marginLeft: 8 }}>RS: {t.rs_vs_spy?.["1M"]}%</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div style={S.card}>
+        <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ALL TICKERS — RS vs S&P 500</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ borderBottom: "1px solid #2a3441" }}>
+            {["TICKER","PRICE","1W","1M","3M","6M","RS 1W","RS 1M","RS 3M"].map(h => (<th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>))}
+          </tr></thead>
+          <tbody>{data.tickers?.map((t: any) => (
+            <tr key={t.ticker} style={{ borderBottom: "1px solid #1e2733" }}>
+              <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</td>
+              <td style={{ padding: "8px", color: "#e6edf3" }}>${t.price}</td>
+              {["1W","1M","3M","6M"].map(p => (<td key={p} style={{ padding: "8px", color: pctColor(t.returns?.[p]) }}>{t.returns?.[p] != null ? `${t.returns[p] > 0 ? "+" : ""}${t.returns[p]}%` : "—"}</td>))}
+              {["1W","1M","3M"].map(p => (<td key={`rs-${p}`} style={{ padding: "8px", color: pctColor(t.rs_vs_spy?.[p]), fontWeight: "bold" }}>{t.rs_vs_spy?.[p] != null ? `${t.rs_vs_spy[p] > 0 ? "+" : ""}${t.rs_vs_spy[p]}` : "—"}</td>))}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
+function RiskAnalytics() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const API = "http://localhost:8001/photonics/advanced";
+  useEffect(() => { (async () => { setLoading(true); try { const res = await fetch(`${API}/risk`); setData(await res.json()); } catch (e) { console.error(e); } setLoading(false); })(); }, []);
+  const riskColor = (tier: string) => tier === "HIGH" ? "#f85149" : tier === "MEDIUM" ? "#d29922" : "#2ea043";
+  const S = { card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 }, metric: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 14, textAlign: "center" as const } };
+  if (loading) return <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Computing risk metrics... (~45s)</div>;
+  if (!data || data.error) return <div style={{ color: "#f85149", padding: 20 }}>Error loading risk data</div>;
+  const ss = data.sector_stats || {};
+  return (
+    <div>
+      <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15, marginBottom: 16 }}>RISK ANALYTICS</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 16 }}>
+        <div style={S.metric}><div style={{ color: "#7d8590", fontSize: 10 }}>AVG BETA</div><div style={{ color: ss.avg_beta > 1.5 ? "#f85149" : "#e6edf3", fontSize: 22, fontWeight: "bold" }}>{ss.avg_beta}</div></div>
+        <div style={S.metric}><div style={{ color: "#7d8590", fontSize: 10 }}>AVG VOL</div><div style={{ color: ss.avg_volatility > 50 ? "#f85149" : "#d29922", fontSize: 22, fontWeight: "bold" }}>{ss.avg_volatility}%</div></div>
+        <div style={S.metric}><div style={{ color: "#7d8590", fontSize: 10 }}>AVG SHARPE</div><div style={{ color: ss.avg_sharpe > 1 ? "#2ea043" : "#d29922", fontSize: 22, fontWeight: "bold" }}>{ss.avg_sharpe}</div></div>
+        <div style={{ ...S.metric, borderColor: "#2ea04350" }}><div style={{ color: "#7d8590", fontSize: 10 }}>LOW</div><div style={{ color: "#2ea043", fontSize: 22, fontWeight: "bold" }}>{ss.low_risk_count}</div></div>
+        <div style={{ ...S.metric, borderColor: "#d2992250" }}><div style={{ color: "#7d8590", fontSize: 10 }}>MED</div><div style={{ color: "#d29922", fontSize: 22, fontWeight: "bold" }}>{ss.medium_risk_count}</div></div>
+        <div style={{ ...S.metric, borderColor: "#f8514950" }}><div style={{ color: "#7d8590", fontSize: 10 }}>HIGH</div><div style={{ color: "#f85149", fontSize: 22, fontWeight: "bold" }}>{ss.high_risk_count}</div></div>
+      </div>
+      <div style={S.card}>
+        <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>RISK METRICS — Sorted by Sharpe</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr style={{ borderBottom: "1px solid #2a3441" }}>
+            {["TICKER","PRICE","BETA","VOL","DRAWDOWN","SHARPE","FROM HIGH","TIER"].map(h => (<th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>))}
+          </tr></thead>
+          <tbody>{data.tickers?.map((t: any) => (
+            <tr key={t.ticker} style={{ borderBottom: "1px solid #1e2733" }}>
+              <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</td>
+              <td style={{ padding: "8px", color: "#e6edf3" }}>${t.price}</td>
+              <td style={{ padding: "8px", color: t.beta > 1.5 ? "#f85149" : t.beta > 1 ? "#d29922" : "#2ea043" }}>{t.beta}</td>
+              <td style={{ padding: "8px", color: t.volatility > 60 ? "#f85149" : t.volatility > 35 ? "#d29922" : "#2ea043" }}>{t.volatility}%</td>
+              <td style={{ padding: "8px", color: "#f85149" }}>{t.max_drawdown}%</td>
+              <td style={{ padding: "8px", color: t.sharpe_ratio > 1 ? "#2ea043" : t.sharpe_ratio > 0 ? "#d29922" : "#f85149", fontWeight: "bold" }}>{t.sharpe_ratio}</td>
+              <td style={{ padding: "8px", color: "#f85149" }}>{t.pct_from_52w_high}%</td>
+              <td style={{ padding: "8px" }}><span style={{ color: riskColor(t.risk_tier), fontWeight: "bold", fontSize: 11, padding: "2px 8px", background: riskColor(t.risk_tier) + "15", borderRadius: 3 }}>{t.risk_tier}</span></td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      {data.position_sizing?.conservative?.length > 0 && (
+        <div style={S.card}>
+          <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>SUGGESTED MAX ALLOCATION</div>
+          <div style={{ color: "#484f58", fontSize: 11, marginBottom: 10 }}>Based on Sharpe and volatility — not financial advice</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {data.position_sizing.conservative.map((p: any) => (
+              <div key={p.ticker} style={{ padding: "6px 12px", background: "#161b22", borderRadius: 4, border: "1px solid #2a3441" }}>
+                <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 12 }}>{p.ticker}</span>
+                <span style={{ color: "#58a6ff", fontSize: 12, marginLeft: 8 }}>{p.max_allocation_pct}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function NewsFeed() {
+  const [news, setNews] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("");
+  const API = "http://localhost:8001/photonics/advanced";
+  const fetchNews = async (ticker?: string) => { setLoading(true); try { const url = ticker ? `${API}/news?ticker=${ticker}` : `${API}/news`; const res = await fetch(url); const json = await res.json(); setNews(json.news || []); } catch (e) { console.error(e); } setLoading(false); };
+  useEffect(() => { fetchNews(); }, []);
+  const TICKERS = ["ALL","AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
+  const S = { btn: { padding: "4px 8px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "monospace", fontSize: 10 } };
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15 }}>NEWS FEED</span>
+        <button onClick={() => fetchNews(filter || undefined)} style={{ ...S.btn, background: "#1a8c5e", color: "#fff" }}>↻ REFRESH</button>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 16 }}>
+        {TICKERS.map(t => (
+          <button key={t} onClick={() => { setFilter(t === "ALL" ? "" : t); fetchNews(t === "ALL" ? undefined : t); }}
+            style={{ ...S.btn, background: (t === "ALL" && !filter) || filter === t ? "#1a8c5e" : "#161b22", color: (t === "ALL" && !filter) || filter === t ? "#fff" : "#7d8590" }}>{t}</button>
+        ))}
+      </div>
+      {loading ? <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Fetching news...</div> : (
+        news.length === 0 ? <div style={{ color: "#484f58", padding: 20, textAlign: "center" }}>No recent news</div> :
+        news.map((item: any, i: number) => (
+          <div key={i} style={{ padding: "12px 16px", borderBottom: "1px solid #1e2733" }}>
+            <div><span style={{ color: "#58a6ff", fontSize: 11, fontWeight: "bold", marginRight: 8, padding: "1px 6px", background: "#58a6ff15", borderRadius: 3 }}>{item.ticker}</span>
+            <a href={item.link} target="_blank" rel="noopener noreferrer" style={{ color: "#e6edf3", fontSize: 13, textDecoration: "none" }}>{item.title}</a></div>
+            <div style={{ marginTop: 4 }}><span style={{ color: "#484f58", fontSize: 10 }}>{item.publisher}</span>
+            {item.published && <span style={{ color: "#484f58", fontSize: 10, marginLeft: 8 }}>{new Date(item.published).toLocaleDateString()}</span>}</div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+
+function AlertsPanel() {
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({ ticker: "", alert_type: "price_below", threshold: "", notes: "" });
+  const API = "http://localhost:8001/photonics/advanced";
+  const fetchAlerts = async () => { setLoading(true); try { const res = await fetch(`${API}/alerts`); const json = await res.json(); setAlerts(json.alerts || []); } catch (e) { console.error(e); } setLoading(false); };
+  const addAlert = async () => { if (!form.ticker) return; await fetch(`${API}/alerts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticker: form.ticker.toUpperCase(), alert_type: form.alert_type, threshold: form.threshold ? parseFloat(form.threshold) : null, notes: form.notes }) }); setForm({ ticker: "", alert_type: "price_below", threshold: "", notes: "" }); fetchAlerts(); };
+  const deleteAlert = async (id: number) => { await fetch(`${API}/alerts/${id}`, { method: "DELETE" }); fetchAlerts(); };
+  useEffect(() => { fetchAlerts(); }, []);
+  const S: Record<string, any> = { card: { background: "#0d1117", border: "1px solid #1e2733", borderRadius: 6, padding: 16, marginBottom: 12 }, input: { padding: "8px 10px", background: "#0d1117", border: "1px solid #2a3441", borderRadius: 4, color: "#e6edf3", fontFamily: "monospace", fontSize: 12 }, btn: { padding: "8px 14px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "monospace", fontSize: 12, fontWeight: "bold" } };
+  const typeLabels: Record<string, string> = { price_below: "📉 Price Below", price_above: "📈 Price Above", rsi_oversold: "🔻 RSI Oversold", rsi_overbought: "🔺 RSI Overbought", volume_spike: "📊 Volume Spike", earnings_soon: "📅 Earnings Soon" };
+  return (
+    <div>
+      <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 15, marginBottom: 16 }}>ALERTS</div>
+      <div style={S.card}>
+        <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>CREATE ALERT</div>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div><div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>TICKER</div><input style={{ ...S.input, width: 80 }} placeholder="COHR" value={form.ticker} onChange={e => setForm({...form, ticker: e.target.value})} /></div>
+          <div><div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>TYPE</div><select style={{ ...S.input, width: 160 }} value={form.alert_type} onChange={e => setForm({...form, alert_type: e.target.value})}>{Object.entries(typeLabels).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></div>
+          <div><div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>THRESHOLD</div><input style={{ ...S.input, width: 100 }} placeholder="200" type="number" step="0.01" value={form.threshold} onChange={e => setForm({...form, threshold: e.target.value})} /></div>
+          <div><div style={{ color: "#7d8590", fontSize: 10, marginBottom: 4 }}>NOTES</div><input style={{ ...S.input, width: 200 }} placeholder="Buy zone" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} /></div>
+          <button onClick={addAlert} style={S.btn}>+ Add</button>
+        </div>
+      </div>
+      {loading ? <div style={{ color: "#7d8590", padding: 20 }}>Loading...</div> : (
+        alerts.length === 0 ? <div style={{ ...S.card, textAlign: "center", padding: 40, color: "#484f58" }}>No alerts. Add one above.</div> :
+        <div style={S.card}>
+          <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ACTIVE ({alerts.length})</div>
+          {alerts.map((a: any) => (
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #1e2733" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <span style={{ fontSize: 18 }}>{a.triggered ? "🔔" : "⏳"}</span>
+                <div>
+                  <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13 }}>{a.ticker}</span>
+                  <span style={{ color: "#58a6ff", fontSize: 11, marginLeft: 8 }}>{typeLabels[a.alert_type] || a.alert_type}</span>
+                  {a.threshold && <span style={{ color: "#d29922", fontSize: 11, marginLeft: 8 }}>${a.threshold}</span>}
+                  {a.notes && <span style={{ color: "#484f58", fontSize: 11, marginLeft: 8 }}>— {a.notes}</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {a.current_price && <span style={{ color: "#e6edf3", fontSize: 12 }}>Now: ${a.current_price}</span>}
+                {a.triggered && <span style={{ color: "#2ea043", fontSize: 11, fontWeight: "bold", padding: "2px 8px", background: "#2ea04320", borderRadius: 3 }}>TRIGGERED</span>}
+                <button onClick={() => deleteAlert(a.id)} style={{ background: "transparent", border: "none", color: "#484f58", cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
