@@ -4,12 +4,14 @@ Full-featured backend with Robinhood integration, yfinance charts,
 and all frontend-compatible endpoints.
 """
 
-from fastapi import FastAPI, HTTPException, Query
+import fastapi
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from app.options_router import router as options_router
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-import asyncio, json, os, traceback, uuid, math
+import asyncio, csv, glob as globmod, json, os, re, shutil, traceback, uuid, math
 
 import redis, httpx
 
@@ -56,6 +58,10 @@ REDIS_URL  = os.getenv("REDIS_URL", "redis://localhost:6379")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 RH_EMAIL   = os.getenv("RH_EMAIL", "")
 RH_PASSWORD= os.getenv("RH_PASSWORD", "")
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_CHANNEL_ID = os.getenv("DISCORD_CHANNEL_ID", "")
+DISCORD_USER_ID = os.getenv("DISCORD_USER_ID", "")
+TWITTER_USERNAME = os.getenv("TWITTER_USERNAME", "")
 
 app = FastAPI(title="Stock Platform API", version="4.0.0")
 from app.photonics_api import router as photonics_router
@@ -89,6 +95,8 @@ KEYWORDS_KEY     = "keywords:set"
 NEWS_ALERTS_KEY  = "news:alerts"
 BREAKING_KEY     = "breaking:alerts"
 CALENDAR_CACHE   = "cache:calendar"
+NEWS_INTEL_CACHE = "cache:news:intelligence"
+NEWS_BOOKMARKS_KEY = "news:bookmarks"
 
 # ── Macro symbols ───────────────────────────────────────────────────────
 MACRO_SYMBOLS = {
@@ -354,28 +362,113 @@ def compute_macd(closes):
     return {"macd": macd_line, "signal": signal, "histogram": histogram}
 
 
+def compute_atr(highs, lows, closes, period=14):
+    """Average True Range"""
+    result = [None] * period
+    trs = []
+    for i in range(len(closes)):
+        if i == 0:
+            trs.append(highs[i] - lows[i])
+        else:
+            tr = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+            trs.append(tr)
+    if len(trs) < period:
+        return [None] * len(closes)
+    atr_val = sum(trs[:period]) / period
+    result.append(atr_val)
+    for i in range(period + 1, len(trs)):
+        atr_val = (atr_val * (period - 1) + trs[i]) / period
+        result.append(atr_val)
+    while len(result) < len(closes):
+        result.append(None)
+    return result[:len(closes)]
+
+def compute_stochastic(highs, lows, closes, k_period=14, d_period=3):
+    """%K and %D stochastic oscillator"""
+    k_vals = []
+    for i in range(len(closes)):
+        if i < k_period - 1:
+            k_vals.append(None)
+        else:
+            h_max = max(highs[i - k_period + 1:i + 1])
+            l_min = min(lows[i - k_period + 1:i + 1])
+            rng = h_max - l_min
+            if rng == 0:
+                k_vals.append(50.0)
+            else:
+                k_vals.append(((closes[i] - l_min) / rng) * 100)
+    # %D = SMA of %K
+    d_vals = []
+    valid_k = [v for v in k_vals if v is not None]
+    if len(valid_k) >= d_period:
+        d_raw = compute_sma(valid_k, d_period)
+        pad = len(k_vals) - len(d_raw)
+        d_vals = [None] * pad + d_raw
+    else:
+        d_vals = [None] * len(k_vals)
+    return {"k": k_vals, "d": d_vals}
+
+def detect_patterns(opens, highs, lows, closes, dates):
+    """Simple pattern detection: engulfing, doji, hammer, shooting star"""
+    patterns = []
+    for i in range(1, len(closes)):
+        body = abs(closes[i] - opens[i])
+        prev_body = abs(closes[i-1] - opens[i-1])
+        upper_wick = highs[i] - max(opens[i], closes[i])
+        lower_wick = min(opens[i], closes[i]) - lows[i]
+        full_range = highs[i] - lows[i]
+        if full_range == 0:
+            continue
+        # Bullish engulfing
+        if (closes[i-1] < opens[i-1] and closes[i] > opens[i] and
+            opens[i] <= closes[i-1] and closes[i] >= opens[i-1] and body > prev_body * 0.8):
+            patterns.append({"pattern": "Bullish Engulfing", "index": i, "date": dates[i], "direction": "bull", "confidence": 0.7})
+        # Bearish engulfing
+        elif (closes[i-1] > opens[i-1] and closes[i] < opens[i] and
+              opens[i] >= closes[i-1] and closes[i] <= opens[i-1] and body > prev_body * 0.8):
+            patterns.append({"pattern": "Bearish Engulfing", "index": i, "date": dates[i], "direction": "bear", "confidence": 0.7})
+        # Doji
+        elif body < full_range * 0.1 and full_range > 0:
+            patterns.append({"pattern": "Doji", "index": i, "date": dates[i], "direction": "neutral", "confidence": 0.5})
+        # Hammer (bullish reversal)
+        elif lower_wick > body * 2 and upper_wick < body * 0.5 and body > 0:
+            patterns.append({"pattern": "Hammer", "index": i, "date": dates[i], "direction": "bull", "confidence": 0.6})
+        # Shooting star (bearish reversal)
+        elif upper_wick > body * 2 and lower_wick < body * 0.5 and body > 0:
+            patterns.append({"pattern": "Shooting Star", "index": i, "date": dates[i], "direction": "bear", "confidence": 0.6})
+    return patterns
+
+
 @app.get("/technicals/{ticker}")
 async def get_technicals(
     ticker: str,
-    period: str = Query("3m", pattern="^(1m|3m|6m|1y)$"),
+    period: str = Query("3m", pattern="^(1d|5d|1m|3m|6m|1y|2y)$"),
 ):
     t = ticker.strip().upper()
 
     if yf is None:
         raise HTTPException(500, "yfinance not installed")
 
-    period_map = {"1m": "3mo", "3m": "3mo", "6m": "6mo", "1y": "1y"}
+    period_map = {"1d": "5d", "5d": "1mo", "1m": "3mo", "3m": "3mo", "6m": "6mo", "1y": "1y", "2y": "2y"}
+    interval_map = {"1d": "5m", "5d": "15m", "1m": "1d", "3m": "1d", "6m": "1d", "1y": "1d", "2y": "1wk"}
     yf_period = period_map.get(period, "3mo")
+    yf_interval = interval_map.get(period, "1d")
+    is_intraday = yf_interval in ("5m", "15m", "30m", "1h")
 
     try:
         stock = yf.Ticker(t)
-        df = stock.history(period=yf_period, interval="1d")
+        df = stock.history(period=yf_period, interval=yf_interval)
         if df.empty:
             raise ValueError("No data returned")
+        # For intraday, only keep the most recent N days of data
+        if period == "1d" and len(df) > 0:
+            last_date = df.index[-1].date()
+            df = df[df.index.date == last_date]
     except Exception as e:
         raise HTTPException(404, f"Could not fetch data for {t}: {e}")
 
-    dates   = [d.strftime("%Y-%m-%d") for d in df.index]
+    date_fmt = "%Y-%m-%d %H:%M" if is_intraday else "%Y-%m-%d"
+    dates   = [d.strftime(date_fmt) for d in df.index]
     closes  = [round(float(v), 4) for v in df["Close"]]
     opens   = [round(float(v), 4) for v in df["Open"]]
     highs   = [round(float(v), 4) for v in df["High"]]
@@ -388,6 +481,8 @@ async def get_technicals(
     ema26     = compute_ema(closes, 26)
     rsi_vals  = compute_rsi(closes, 14)
     macd_data = compute_macd(closes)
+    atr_vals  = compute_atr(highs, lows, closes, 14)
+    stoch     = compute_stochastic(highs, lows, closes, 14, 3)
 
     candles = []
     for i in range(len(dates)):
@@ -404,8 +499,15 @@ async def get_technicals(
             "macd": round(macd_data["macd"][i], 4) if i < len(macd_data["macd"]) and macd_data["macd"][i] is not None else None,
             "macdSignal": round(macd_data["signal"][i], 4) if i < len(macd_data["signal"]) and macd_data["signal"][i] is not None else None,
             "macdHist": round(macd_data["histogram"][i], 4) if i < len(macd_data["histogram"]) and macd_data["histogram"][i] is not None else None,
+            "atr": round(atr_vals[i], 4) if i < len(atr_vals) and atr_vals[i] is not None else None,
+            "stochK": round(stoch["k"][i], 2) if i < len(stoch["k"]) and stoch["k"][i] is not None else None,
+            "stochD": round(stoch["d"][i], 2) if i < len(stoch["d"]) and stoch["d"][i] is not None else None,
         })
-    return {"ticker": t, "period": period, "candles": candles}
+
+    # Detect patterns
+    pats = detect_patterns(opens, highs, lows, closes, dates)
+
+    return {"ticker": t, "period": period, "candles": candles, "patterns": pats}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -523,6 +625,436 @@ async def get_earnings(
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  FIDELITY AUTO-SYNC — watches iCloud + Downloads for new CSV exports
+# ═══════════════════════════════════════════════════════════════════════
+FIDELITY_CSV_DEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "positions.csv")
+FIDELITY_SEARCH_DIRS = [
+    os.path.expanduser("~/Library/Mobile Documents/com~apple~CloudDocs"),
+    os.path.expanduser("~/Downloads"),
+    os.path.expanduser("~/Desktop"),
+]
+FIDELITY_CSV_PATTERN = "Portfolio Positions*.csv"
+
+def _find_latest_fidelity_csv():
+    """Scan known directories for the most recent Fidelity CSV export."""
+    best_path, best_mtime = None, 0
+    for d in FIDELITY_SEARCH_DIRS:
+        if not os.path.isdir(d):
+            continue
+        for f in globmod.glob(os.path.join(d, FIDELITY_CSV_PATTERN)):
+            mtime = os.path.getmtime(f)
+            if mtime > best_mtime:
+                best_path, best_mtime = f, mtime
+    return best_path, best_mtime
+
+def _sync_fidelity_csv() -> dict:
+    """Copy latest Fidelity CSV to data/positions.csv if it's newer."""
+    src, src_mtime = _find_latest_fidelity_csv()
+    if not src:
+        return {"synced": False, "reason": "no_csv_found", "searched": FIDELITY_SEARCH_DIRS}
+
+    # Check if dest already has the same or newer file
+    dest_mtime = os.path.getmtime(FIDELITY_CSV_DEST) if os.path.exists(FIDELITY_CSV_DEST) else 0
+    if src_mtime <= dest_mtime:
+        return {
+            "synced": False, "reason": "already_current",
+            "source": src,
+            "data_date": datetime.fromtimestamp(dest_mtime).isoformat(),
+        }
+
+    os.makedirs(os.path.dirname(FIDELITY_CSV_DEST), exist_ok=True)
+    shutil.copy2(src, FIDELITY_CSV_DEST)
+    # Clear cache so next positions request uses fresh data
+    rdb.delete("cache:fidelity:positions")
+    return {
+        "synced": True,
+        "source": os.path.basename(src),
+        "data_date": datetime.fromtimestamp(src_mtime).isoformat(),
+    }
+
+@app.get("/portfolio/fidelity-sync")
+async def fidelity_sync():
+    """Manually trigger a sync from iCloud/Downloads."""
+    result = _sync_fidelity_csv()
+    # Also return freshness info
+    if os.path.exists(FIDELITY_CSV_DEST):
+        mtime = os.path.getmtime(FIDELITY_CSV_DEST)
+        result["current_data_date"] = datetime.fromtimestamp(mtime).isoformat()
+        result["age_minutes"] = round((datetime.now().timestamp() - mtime) / 60, 1)
+    return result
+
+@app.get("/portfolio/fidelity-freshness")
+async def fidelity_freshness():
+    """Check how fresh the current positions data is."""
+    if not os.path.exists(FIDELITY_CSV_DEST):
+        return {"has_data": False}
+    mtime = os.path.getmtime(FIDELITY_CSV_DEST)
+    age_min = (datetime.now().timestamp() - mtime) / 60
+    # Check if there's a newer CSV available
+    src, src_mtime = _find_latest_fidelity_csv()
+    newer_available = src is not None and src_mtime > mtime
+    return {
+        "has_data": True,
+        "data_date": datetime.fromtimestamp(mtime).isoformat(),
+        "age_minutes": round(age_min, 1),
+        "newer_available": newer_available,
+        "newer_source": os.path.basename(src) if newer_available else None,
+    }
+
+async def _periodic_fidelity_sync():
+    """Background task: check for new Fidelity CSVs every 60 seconds."""
+    while True:
+        await asyncio.sleep(60)  # 1 min (faster detection)
+        try:
+            result = _sync_fidelity_csv()
+            if result.get("synced"):
+                print(f"📊 Fidelity auto-sync: imported {result['source']}")
+        except Exception as e:
+            print(f"⚠️  Fidelity auto-sync error: {e}")
+
+
+def _fetch_live_prices(tickers: list) -> dict:
+    """Fetch real-time prices for a list of tickers using yfinance."""
+    try:
+        import yfinance as yf
+        if not tickers:
+            return {}
+        # Batch download for efficiency
+        data = yf.download(tickers, period="2d", progress=False, auto_adjust=True, threads=True)
+        prices = {}
+        if len(tickers) == 1:
+            tk = tickers[0]
+            if not data.empty:
+                prices[tk] = {
+                    "price": float(data["Close"].iloc[-1]),
+                    "prev_close": float(data["Close"].iloc[-2]) if len(data) > 1 else float(data["Close"].iloc[-1]),
+                }
+        else:
+            for tk in tickers:
+                try:
+                    close_col = data["Close"][tk].dropna()
+                    if len(close_col) >= 2:
+                        prices[tk] = {
+                            "price": float(close_col.iloc[-1]),
+                            "prev_close": float(close_col.iloc[-2]),
+                        }
+                    elif len(close_col) == 1:
+                        prices[tk] = {
+                            "price": float(close_col.iloc[-1]),
+                            "prev_close": float(close_col.iloc[-1]),
+                        }
+                except Exception:
+                    pass
+        return prices
+    except Exception as e:
+        print(f"⚠️  Live price fetch error: {e}")
+        return {}
+
+
+async def _periodic_price_refresh():
+    """Background task: refresh live prices every 30s during market hours."""
+    while True:
+        await asyncio.sleep(30)
+        try:
+            now = datetime.now()
+            # Only refresh during extended market hours (4am-8pm ET, Mon-Fri)
+            weekday = now.weekday()
+            hour = now.hour
+            if weekday < 5 and 4 <= hour <= 20:
+                # Clear the live price cache to force refresh on next request
+                rdb.delete("cache:fidelity:positions")
+                rdb.delete("cache:fidelity:live_prices")
+        except Exception:
+            pass
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FIDELITY POSITIONS (must come before /portfolio/{name} to avoid route conflict)
+# ═══════════════════════════════════════════════════════════════════════
+@app.get("/portfolio/fidelity-positions")
+async def get_fidelity_positions(live: bool = True):
+    cache_key = "cache:fidelity:positions"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    csv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "positions.csv")
+    if not os.path.exists(csv_path):
+        return {"error": "positions.csv not found", "positions": [], "summary": {}}
+
+    positions = []
+    with open(csv_path, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            symbol = (row.get("Symbol") or "").strip()
+            if not symbol:
+                continue
+            # Skip disclaimer rows
+            acct = (row.get("Account Name") or "").strip()
+            if not acct:
+                continue
+
+            is_cash = "MONEY MARKET" in (row.get("Description") or "").upper() or symbol.endswith("**")
+            is_option = symbol.startswith("-") or symbol.startswith(" -")
+
+            def parse_num(val):
+                if not val:
+                    return None
+                val = val.strip().replace("$", "").replace(",", "").replace("+", "").replace("%", "")
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return None
+
+            positions.append({
+                "account": acct,
+                "account_number": (row.get("Account Number") or "").strip(),
+                "symbol": symbol.strip().lstrip(" -"),
+                "raw_symbol": symbol.strip(),
+                "description": (row.get("Description") or "").strip(),
+                "quantity": parse_num(row.get("Quantity")),
+                "last_price": parse_num(row.get("Last Price")),
+                "price_change": parse_num(row.get("Last Price Change")),
+                "current_value": parse_num(row.get("Current Value")),
+                "day_gain_dollar": parse_num(row.get("Today's Gain/Loss Dollar")),
+                "day_gain_pct": parse_num(row.get("Today's Gain/Loss Percent")),
+                "total_gain_dollar": parse_num(row.get("Total Gain/Loss Dollar")),
+                "total_gain_pct": parse_num(row.get("Total Gain/Loss Percent")),
+                "pct_of_account": parse_num(row.get("Percent Of Account")),
+                "cost_basis": parse_num(row.get("Cost Basis Total")),
+                "avg_cost": parse_num(row.get("Average Cost Basis")),
+                "type": (row.get("Type") or "").strip(),
+                "is_option": is_option,
+                "is_cash": is_cash,
+            })
+
+    # ── Live price overlay ────────────────────────────────────────────
+    live_updated = False
+    if live:
+        # Get unique stock tickers (not options, not cash)
+        stock_tickers = list(set(
+            p["symbol"] for p in positions
+            if not p["is_option"] and not p["is_cash"] and p["quantity"]
+        ))
+        if stock_tickers:
+            # Check for cached live prices (30s TTL)
+            live_cache = rdb.get("cache:fidelity:live_prices")
+            if live_cache:
+                live_prices = json.loads(live_cache)
+            else:
+                live_prices = _fetch_live_prices(stock_tickers)
+                if live_prices:
+                    rdb.setex("cache:fidelity:live_prices", 30, json.dumps(live_prices))
+
+            if live_prices:
+                live_updated = True
+                for p in positions:
+                    if p["is_option"] or p["is_cash"]:
+                        continue
+                    lp = live_prices.get(p["symbol"])
+                    if lp and p["quantity"]:
+                        new_price = lp["price"]
+                        prev_close = lp["prev_close"]
+                        qty = p["quantity"]
+                        avg_cost = p["avg_cost"] or 0
+                        cost_total = p["cost_basis"] or (avg_cost * qty)
+
+                        p["last_price"] = round(new_price, 2)
+                        p["price_change"] = round(new_price - prev_close, 2)
+                        p["current_value"] = round(new_price * qty, 2)
+                        p["day_gain_dollar"] = round((new_price - prev_close) * qty, 2)
+                        p["day_gain_pct"] = round(((new_price - prev_close) / prev_close * 100) if prev_close else 0, 2)
+                        p["total_gain_dollar"] = round(new_price * qty - cost_total, 2)
+                        p["total_gain_pct"] = round(((new_price * qty - cost_total) / cost_total * 100) if cost_total else 0, 2)
+
+    # ── Recalculate totals (works whether live or CSV prices) ─────────
+    accounts = list(set(p["account"] for p in positions))
+    stocks = [p for p in positions if not p["is_option"] and not p["is_cash"]]
+    options = [p for p in positions if p["is_option"]]
+    cash_positions = [p for p in positions if p["is_cash"]]
+
+    total_value = sum(p["current_value"] or 0 for p in positions)
+    total_cost = sum(p["cost_basis"] or 0 for p in stocks)
+    total_day_gain = sum(p["day_gain_dollar"] or 0 for p in positions if p["day_gain_dollar"] is not None)
+    total_gain = sum(p["total_gain_dollar"] or 0 for p in positions if p["total_gain_dollar"] is not None)
+    total_cash = sum(p["current_value"] or 0 for p in cash_positions)
+
+    # Recalculate pct_of_account with live totals
+    if total_value > 0:
+        for p in positions:
+            p["pct_of_account"] = round(((p["current_value"] or 0) / total_value) * 100, 2)
+
+    acct_summary = {}
+    for acct_name in accounts:
+        acct_pos = [p for p in positions if p["account"] == acct_name]
+        acct_summary[acct_name] = {
+            "value": round(sum(p["current_value"] or 0 for p in acct_pos), 2),
+            "day_gain": round(sum(p["day_gain_dollar"] or 0 for p in acct_pos if p["day_gain_dollar"] is not None), 2),
+            "total_gain": round(sum(p["total_gain_dollar"] or 0 for p in acct_pos if p["total_gain_dollar"] is not None), 2),
+            "positions": len([p for p in acct_pos if not p["is_cash"]]),
+        }
+
+    best = max(stocks, key=lambda p: p["total_gain_pct"] or -9999) if stocks else None
+    worst = min(stocks, key=lambda p: p["total_gain_pct"] or 9999) if stocks else None
+
+    result = {
+        "accounts": sorted(accounts),
+        "positions": positions,
+        "live_prices": live_updated,
+        "summary": {
+            "total_value": round(total_value, 2),
+            "total_cost": round(total_cost, 2),
+            "total_day_gain": round(total_day_gain, 2),
+            "day_gain": round(total_day_gain, 2),
+            "total_gain": round(total_gain, 2),
+            "total_gain_pct": round((total_gain / total_cost * 100) if total_cost else 0, 2),
+            "total_cash": round(total_cash, 2),
+            "num_stocks": len(stocks),
+            "num_options": len(options),
+            "num_total": len(positions),
+            "best_performer": {"symbol": best["symbol"], "pct": best["total_gain_pct"]} if best else None,
+            "worst_performer": {"symbol": worst["symbol"], "pct": worst["total_gain_pct"]} if worst else None,
+            "accounts": acct_summary,
+        }
+    }
+
+    # Cache for 30s (short TTL so live prices stay fresh)
+    rdb.setex(cache_key, 30, json.dumps(result))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FIDELITY SECTORS
+# ═══════════════════════════════════════════════════════════════════════
+@app.get("/portfolio/fidelity-positions/sectors")
+async def get_fidelity_sectors():
+    """Get sector breakdown of Fidelity holdings."""
+    cache_key = "cache:fidelity:sectors"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    # Get positions from the fidelity cache
+    pos_cache = rdb.get("cache:fidelity:positions")
+    if not pos_cache:
+        return {"sectors": []}
+
+    data = json.loads(pos_cache)
+    positions = data.get("positions", [])
+    stocks = [p for p in positions if not p.get("is_option") and not p.get("is_cash") and p.get("symbol")]
+
+    tickers = list(set(p["symbol"] for p in stocks))
+
+    # Fetch sector info from yfinance
+    import yfinance as yf
+    sector_map = {}
+    for tk in tickers:
+        try:
+            info = yf.Ticker(tk).info
+            sector_map[tk] = info.get("sector", "Unknown")
+        except Exception:
+            sector_map[tk] = "Unknown"
+
+    # Group by sector
+    sector_data = {}
+    for p in stocks:
+        sector = sector_map.get(p["symbol"], "Unknown")
+        if sector not in sector_data:
+            sector_data[sector] = {"name": sector, "value": 0, "tickers": [], "pnl": 0}
+        sector_data[sector]["value"] += p.get("current_value") or 0
+        sector_data[sector]["pnl"] += p.get("total_gain_dollar") or 0
+        if p["symbol"] not in sector_data[sector]["tickers"]:
+            sector_data[sector]["tickers"].append(p["symbol"])
+
+    total = sum(s["value"] for s in sector_data.values())
+    SECTOR_COLORS = {"Technology":"#6366f1","Healthcare":"#10b981","Financial Services":"#f59e0b","Consumer Cyclical":"#ec4899","Communication Services":"#8b5cf6","Industrials":"#64748b","Consumer Defensive":"#14b8a6","Energy":"#f97316","Real Estate":"#06b6d4","Utilities":"#84cc16","Basic Materials":"#a78bfa","Unknown":"#475569"}
+
+    sectors = sorted([
+        {**s, "pct": round(s["value"] / total * 100, 1) if total else 0, "color": SECTOR_COLORS.get(s["name"], "#6366f1")}
+        for s in sector_data.values()
+    ], key=lambda x: -x["value"])
+
+    result = {"sectors": sectors, "total": round(total, 2)}
+    rdb.setex(cache_key, 600, json.dumps(result))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  HOLDING DEEP DIVE
+# ═══════════════════════════════════════════════════════════════════════
+@app.get("/holding-deep-dive/{ticker}")
+async def get_holding_deep_dive(ticker: str):
+    """Deep dive data for a single holding: stats, analyst, insiders."""
+    cache_key = f"cache:holding:{ticker.upper()}"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    import yfinance as yf
+    tk = yf.Ticker(ticker.upper())
+    info = tk.info or {}
+
+    # Key stats
+    stats = {
+        "pe": info.get("trailingPE"),
+        "forward_pe": info.get("forwardPE"),
+        "market_cap": info.get("marketCap"),
+        "fifty_two_week_high": info.get("fiftyTwoWeekHigh"),
+        "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
+        "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
+        "sector": info.get("sector", "N/A"),
+        "industry": info.get("industry", "N/A"),
+        "dividend_yield": info.get("dividendYield"),
+        "beta": info.get("beta"),
+        "avg_volume": info.get("averageVolume"),
+        "target_mean": info.get("targetMeanPrice"),
+        "target_high": info.get("targetHighPrice"),
+        "target_low": info.get("targetLowPrice"),
+        "recommendation": info.get("recommendationKey"),
+        "num_analysts": info.get("numberOfAnalystOpinions"),
+        "short_pct": info.get("shortPercentOfFloat"),
+        "earnings_date": None,
+    }
+
+    # 52-week range position (0-100%)
+    if stats["fifty_two_week_low"] and stats["fifty_two_week_high"] and stats["current_price"]:
+        rng = stats["fifty_two_week_high"] - stats["fifty_two_week_low"]
+        stats["range_position"] = round((stats["current_price"] - stats["fifty_two_week_low"]) / rng * 100, 1) if rng > 0 else 50
+
+    # Analyst recommendations
+    analyst = {"buy": 0, "hold": 0, "sell": 0, "strong_buy": 0, "strong_sell": 0}
+    try:
+        recs = tk.recommendations
+        if recs is not None and not recs.empty:
+            latest = recs.tail(1).iloc[0]
+            for col in recs.columns:
+                col_lower = col.lower().replace(" ", "_")
+                if col_lower in analyst:
+                    analyst[col_lower] = int(latest[col]) if latest[col] else 0
+    except Exception:
+        pass
+
+    # Insider transactions
+    insiders = []
+    try:
+        ins = tk.insider_transactions
+        if ins is not None and not ins.empty:
+            for _, row in ins.head(5).iterrows():
+                insiders.append({
+                    "name": str(row.get("Insider Trading", row.get("Text", "Unknown"))),
+                    "shares": int(row.get("Shares", 0)) if row.get("Shares") else 0,
+                    "value": float(row.get("Value", 0)) if row.get("Value") else 0,
+                    "date": str(row.get("Start Date", row.get("Date", ""))),
+                })
+    except Exception:
+        pass
+
+    result = {"ticker": ticker.upper(), "stats": stats, "analyst": analyst, "insiders": insiders}
+    rdb.setex(cache_key, 600, json.dumps(result))
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  PORTFOLIO
 #  Frontend expects: GET /portfolio/{name} → {holdings: {TICKER: {shares, cost_basis}}}
 #  Frontend expects: POST /portfolio/{name} body:{ticker,shares,cost_basis}
@@ -532,7 +1064,7 @@ async def get_earnings(
 async def get_portfolio(name: str):
     raw = rdb.get(f"portfolio:{name}")
     if not raw:
-        return {"name": name, "holdings": {}, "cash": 0}
+        return {"name": name, "holdings": {}, "cash": 0, "options": [], "account": {}}
     data = json.loads(raw)
     holdings = data.get("holdings", {})
     if isinstance(holdings, list):
@@ -542,7 +1074,13 @@ async def get_portfolio(name: str):
             if t:
                 h_dict[t] = {"shares": item.get("shares", 0), "cost_basis": item.get("cost_basis", 0)}
         holdings = h_dict
-    return {"name": name, "holdings": holdings, "cash": data.get("cash", 0)}
+    return {
+        "name": name,
+        "holdings": holdings,
+        "cash": data.get("cash", 0),
+        "options": data.get("options", []),
+        "account": data.get("account", {}),
+    }
 
 @app.post("/portfolio/{name}")
 async def save_portfolio(name: str, data: dict):
@@ -609,6 +1147,201 @@ async def snapshot_portfolio(name: str):
 async def portfolio_history(name: str):
     raw = rdb.lrange(f"portfolio:{name}:history", 0, -1)
     return [json.loads(r) for r in raw]
+
+@app.get("/portfolio/{name}/sectors")
+async def portfolio_sectors(name: str):
+    """Get sector allocation for portfolio holdings"""
+    raw = rdb.get(f"portfolio:{name}")
+    if not raw:
+        return {"sectors": {}}
+    data = json.loads(raw)
+    holdings = data.get("holdings", {})
+    if isinstance(holdings, list):
+        h_dict = {}
+        for item in holdings:
+            t = item.get("ticker", "")
+            if t:
+                h_dict[t] = {"shares": item.get("shares", 0), "cost_basis": item.get("cost_basis", 0)}
+        holdings = h_dict
+    sectors = {}
+    for ticker, h in holdings.items():
+        try:
+            if yf is not None:
+                info = yf.Ticker(ticker).info
+                sector = info.get("sector", "Unknown")
+                beta = info.get("beta", None)
+            else:
+                sector = "Unknown"
+                beta = None
+        except Exception:
+            sector = "Unknown"
+            beta = None
+        cost_val = h.get("shares", 0) * h.get("cost_basis", 0)
+        if sector not in sectors:
+            sectors[sector] = {"value": 0, "tickers": [], "beta_sum": 0, "beta_count": 0}
+        sectors[sector]["value"] += cost_val
+        sectors[sector]["tickers"].append(ticker)
+        if beta is not None:
+            sectors[sector]["beta_sum"] += beta * cost_val
+            sectors[sector]["beta_count"] += cost_val
+    total = sum(s["value"] for s in sectors.values()) or 1
+    result = {}
+    for s, d in sectors.items():
+        result[s] = {
+            "value": round(d["value"], 2),
+            "weight": round(d["value"] / total * 100, 1),
+            "tickers": d["tickers"],
+            "beta": round(d["beta_sum"] / d["beta_count"], 2) if d["beta_count"] > 0 else None,
+        }
+    return {"sectors": result}
+
+@app.get("/portfolio/{name}/daily-pnl")
+async def portfolio_daily_pnl(name: str):
+    """Get 30-day daily portfolio P&L"""
+    raw = rdb.get(f"portfolio:{name}")
+    if not raw:
+        return {"daily": []}
+    data = json.loads(raw)
+    holdings = data.get("holdings", {})
+    if isinstance(holdings, list):
+        h_dict = {}
+        for item in holdings:
+            t = item.get("ticker", "")
+            if t:
+                h_dict[t] = {"shares": item.get("shares", 0), "cost_basis": item.get("cost_basis", 0)}
+        holdings = h_dict
+    cash = data.get("cash", 0)
+    if not holdings or yf is None:
+        return {"daily": []}
+    # Fetch 30-day history for all tickers
+    tickers = list(holdings.keys())
+    history_data = {}
+    for t in tickers:
+        try:
+            df = yf.Ticker(t).history(period="1mo", interval="1d")
+            if not df.empty:
+                history_data[t] = {d.strftime("%Y-%m-%d"): round(float(v), 4) for d, v in zip(df.index, df["Close"])}
+        except Exception:
+            pass
+    if not history_data:
+        return {"daily": []}
+    # Build daily values
+    all_dates = sorted(set(d for prices in history_data.values() for d in prices.keys()))
+    daily = []
+    total_cost = sum(h["shares"] * h["cost_basis"] for h in holdings.values()) + cash
+    for date in all_dates:
+        value = cash
+        for t, h in holdings.items():
+            if t in history_data and date in history_data[t]:
+                value += history_data[t][date] * h["shares"]
+            else:
+                value += h["cost_basis"] * h["shares"]
+        pnl = value - total_cost
+        pnl_pct = (pnl / total_cost * 100) if total_cost > 0 else 0
+        daily.append({"date": date, "value": round(value, 2), "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct, 2)})
+    return {"daily": daily}
+
+@app.get("/options/{ticker}/greeks")
+async def get_options_greeks(ticker: str):
+    """Get options chain with Greeks from yfinance"""
+    t = ticker.strip().upper()
+    if yf is None:
+        raise HTTPException(500, "yfinance not installed")
+    try:
+        stock = yf.Ticker(t)
+        expirations = stock.options
+        if not expirations:
+            return {"ticker": t, "expirations": []}
+        result = []
+        for exp in expirations[:4]:  # limit to next 4 expirations
+            chain = stock.option_chain(exp)
+            calls = []
+            for _, row in chain.calls.iterrows():
+                calls.append({
+                    "strike": float(row["strike"]),
+                    "lastPrice": float(row.get("lastPrice", 0)),
+                    "volume": int(row.get("volume", 0) or 0),
+                    "openInterest": int(row.get("openInterest", 0) or 0),
+                    "impliedVolatility": round(float(row.get("impliedVolatility", 0) or 0) * 100, 1),
+                    "inTheMoney": bool(row.get("inTheMoney", False)),
+                })
+            puts = []
+            for _, row in chain.puts.iterrows():
+                puts.append({
+                    "strike": float(row["strike"]),
+                    "lastPrice": float(row.get("lastPrice", 0)),
+                    "volume": int(row.get("volume", 0) or 0),
+                    "openInterest": int(row.get("openInterest", 0) or 0),
+                    "impliedVolatility": round(float(row.get("impliedVolatility", 0) or 0) * 100, 1),
+                    "inTheMoney": bool(row.get("inTheMoney", False)),
+                })
+            result.append({"expiration": exp, "calls": calls, "puts": puts})
+        return {"ticker": t, "expirations": result}
+    except Exception as e:
+        raise HTTPException(500, f"Options error: {e}")
+
+@app.get("/options/{ticker}/iv-stats")
+async def get_iv_stats(ticker: str):
+    """Get IV rank and percentile"""
+    t = ticker.strip().upper()
+    if yf is None:
+        raise HTTPException(500, "yfinance not installed")
+    try:
+        stock = yf.Ticker(t)
+        # Compute historical volatility from 1-year close prices
+        df = stock.history(period="1y", interval="1d")
+        if df.empty or len(df) < 30:
+            return {"ticker": t, "currentIV": None, "ivRank": None, "ivPercentile": None}
+        closes = [float(v) for v in df["Close"]]
+        import math
+        # Rolling 20-day HV
+        hvs = []
+        for i in range(20, len(closes)):
+            rets = [math.log(closes[j] / closes[j-1]) for j in range(i-19, i+1) if closes[j-1] > 0]
+            if rets:
+                mean = sum(rets) / len(rets)
+                var = sum((r - mean)**2 for r in rets) / max(len(rets)-1, 1)
+                hv = math.sqrt(var * 252) * 100
+                hvs.append(hv)
+        if not hvs:
+            return {"ticker": t, "currentIV": None, "ivRank": None, "ivPercentile": None}
+        current = hvs[-1]
+        iv_high = max(hvs)
+        iv_low = min(hvs)
+        iv_rank = ((current - iv_low) / (iv_high - iv_low) * 100) if iv_high > iv_low else 50
+        iv_pct = sum(1 for h in hvs if h < current) / len(hvs) * 100
+        return {
+            "ticker": t,
+            "currentIV": round(current, 1),
+            "ivRank": round(iv_rank, 1),
+            "ivPercentile": round(iv_pct, 1),
+            "iv52High": round(iv_high, 1),
+            "iv52Low": round(iv_low, 1),
+        }
+    except Exception as e:
+        raise HTTPException(500, f"IV stats error: {e}")
+
+@app.get("/patterns/{ticker}")
+async def get_patterns(ticker: str, period: str = Query("3m", pattern="^(1d|5d|1m|3m|6m|1y|2y)$")):
+    """Detect candlestick patterns"""
+    t = ticker.strip().upper()
+    if yf is None:
+        raise HTTPException(500, "yfinance not installed")
+    period_map = {"1d": "5d", "5d": "1mo", "1m": "3mo", "3m": "3mo", "6m": "6mo", "1y": "1y", "2y": "2y"}
+    yf_period = period_map.get(period, "3mo")
+    try:
+        df = yf.Ticker(t).history(period=yf_period, interval="1d")
+        if df.empty:
+            return {"ticker": t, "patterns": []}
+        opens = [float(v) for v in df["Open"]]
+        highs = [float(v) for v in df["High"]]
+        lows = [float(v) for v in df["Low"]]
+        closes = [float(v) for v in df["Close"]]
+        dates = [d.strftime("%Y-%m-%d") for d in df.index]
+        pats = detect_patterns(opens, highs, lows, closes, dates)
+        return {"ticker": t, "patterns": pats}
+    except Exception as e:
+        raise HTTPException(500, f"Pattern detection error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -736,21 +1469,173 @@ async def delete_conviction(cid: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  NEWS INTELLIGENCE UTILITIES
+# ═══════════════════════════════════════════════════════════════════════
+
+BULLISH_WORDS = {"surge", "soar", "rally", "jump", "gain", "rise", "bull", "upgrade",
+                 "beat", "outperform", "record", "boom", "breakout", "growth", "positive",
+                 "strong", "buy", "upside", "momentum", "optimistic", "recovery", "profit",
+                 "bullish", "highs", "surging", "advancing", "climbs"}
+BEARISH_WORDS = {"crash", "plunge", "drop", "fall", "decline", "bear", "downgrade",
+                 "miss", "underperform", "loss", "sell", "warning", "risk", "weak",
+                 "negative", "recession", "cut", "layoff", "bankruptcy", "default", "fear",
+                 "bearish", "lows", "tumble", "slump", "plummets", "selloff"}
+
+SECTOR_KEYWORDS = {
+    "Technology": ["tech", "software", "semiconductor", "ai ", "cloud", "saas", "aapl", "msft", "nvda", "googl", "meta", "chip"],
+    "Finance": ["bank", "financial", "insurance", "lending", "jpm", "bac", "gs", "wall street", "fed ", "rate"],
+    "Healthcare": ["pharma", "biotech", "health", "medical", "drug", "fda", "vaccine"],
+    "Energy": ["oil", "gas", "energy", "solar", "wind", "renewable", "xom", "cvx", "opec"],
+    "Consumer": ["retail", "consumer", "ecommerce", "amazon", "walmart", "amzn", "wmt", "spending"],
+    "Crypto": ["bitcoin", "ethereum", "crypto", "blockchain", "btc", "eth", "defi", "token"],
+    "Industrials": ["manufacturing", "industrial", "aerospace", "defense", "supply chain"],
+    "Real Estate": ["reit", "real estate", "housing", "mortgage", "home"],
+}
+
+
+def classify_news_category(title: str, summary: str) -> str:
+    text = (title + " " + summary).lower()
+    if any(w in text for w in ["earnings", "revenue", "eps", "guidance", "quarterly", "fiscal", "profit margin", "beat estimates", "miss estimates"]):
+        return "earnings"
+    if any(w in text for w in ["bitcoin", "ethereum", "crypto", "blockchain", "defi", "nft", "btc ", "eth ", "token"]):
+        return "crypto"
+    if any(w in text for w in ["ai ", "artificial intelligence", "semiconductor", "chip", "software", "cloud", "saas", "tech giant"]):
+        return "tech"
+    if any(w in text for w in ["fed ", "rate ", "inflation", "gdp", "jobs report", "market ", "s&p", "dow ", "nasdaq", "bull ", "bear ", "recession", "rally"]):
+        return "market"
+    return "other"
+
+
+def analyze_sentiment(title: str, summary: str):
+    text = (title + " " + summary).lower()
+    words = set(re.split(r'\W+', text))
+    bull = len(words & BULLISH_WORDS)
+    bear = len(words & BEARISH_WORDS)
+    total = bull + bear
+    if total == 0:
+        return 0.0, "neutral"
+    score = (bull - bear) / total
+    label = "bullish" if score > 0.15 else "bearish" if score < -0.15 else "neutral"
+    return round(score, 2), label
+
+
+def extract_trending_topics(articles: list) -> list:
+    stop_words = {"the", "a", "an", "is", "are", "was", "were", "to", "of", "in", "for",
+                  "on", "and", "or", "at", "by", "with", "from", "that", "this", "it",
+                  "be", "as", "has", "have", "had", "will", "not", "but", "its", "up",
+                  "down", "new", "says", "said", "could", "would", "than", "after", "over",
+                  "into", "about", "more", "been", "also", "what", "how", "why", "when",
+                  "amid", "stocks", "stock", "market", "share", "shares", "price", "prices"}
+    from collections import Counter
+    word_counts = Counter()
+    word_articles = {}
+    for idx, article in enumerate(articles):
+        words = re.findall(r'\b[a-z]{4,}\b', article.get("title", "").lower())
+        for word in set(words):
+            if word not in stop_words:
+                word_counts[word] += 1
+                word_articles.setdefault(word, []).append(idx)
+    return [{"term": w, "count": c, "articles": word_articles[w]}
+            for w, c in word_counts.most_common(25) if c >= 2]
+
+
+def group_by_timeline(articles: list) -> dict:
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    yesterday = today - timedelta(days=1)
+    groups = {"Today": [], "Yesterday": [], "This Week": [], "Older": []}
+    for idx, a in enumerate(articles):
+        try:
+            pub_str = a.get("published", "")
+            if not pub_str:
+                groups["Older"].append(idx)
+                continue
+            pub = datetime.fromisoformat(pub_str.replace("Z", "+00:00")).date()
+            if pub == today:
+                groups["Today"].append(idx)
+            elif pub == yesterday:
+                groups["Yesterday"].append(idx)
+            elif pub >= today - timedelta(days=7):
+                groups["This Week"].append(idx)
+            else:
+                groups["Older"].append(idx)
+        except Exception:
+            groups["Older"].append(idx)
+    return groups
+
+
+def build_sector_heatmap(articles: list) -> dict:
+    heatmap = {}
+    for sector, keywords in SECTOR_KEYWORDS.items():
+        count = 0
+        sentiments = []
+        for a in articles:
+            text = (a.get("title", "") + " " + a.get("summary", "")).lower()
+            if any(kw in text for kw in keywords):
+                count += 1
+                sentiments.append(a.get("sentiment", 0))
+        if count > 0:
+            heatmap[sector] = {
+                "count": count,
+                "sentiment_avg": round(sum(sentiments) / len(sentiments), 2) if sentiments else 0
+            }
+    return heatmap
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  NEWS
 #  Frontend expects: GET /news → {articles: [{title,source,link,published,summary}]}
 # ═══════════════════════════════════════════════════════════════════════
-def _map_finnhub_news(items):
+def _map_finnhub_news(items, enrich=False):
     result = []
+    now = datetime.now(timezone.utc)
     for n in items:
-        result.append({
-            "title": n.get("headline", ""),
+        pub_dt = datetime.fromtimestamp(n.get("datetime", 0), tz=timezone.utc) if n.get("datetime") else None
+        title = n.get("headline", "")
+        summary = n.get("summary", "")
+
+        article = {
+            "title": title,
             "source": n.get("source", ""),
             "link": n.get("url", ""),
-            "published": datetime.fromtimestamp(
-                n.get("datetime", 0), tz=timezone.utc
-            ).isoformat() if n.get("datetime") else "",
-            "summary": n.get("summary", ""),
-        })
+            "published": pub_dt.isoformat() if pub_dt else "",
+            "summary": summary,
+        }
+
+        if enrich:
+            # Relative time
+            relative = ""
+            if pub_dt:
+                diff = now - pub_dt
+                mins = int(diff.total_seconds() / 60)
+                if mins < 0:
+                    relative = "just now"
+                elif mins < 60:
+                    relative = f"{mins}m ago"
+                elif mins < 1440:
+                    relative = f"{mins // 60}h ago"
+                else:
+                    relative = f"{mins // 1440}d ago"
+
+            # Tickers from text + Finnhub related field
+            text_tickers = extract_tickers(title + " " + summary)
+            related = [t.strip().upper() for t in (n.get("related", "") or "").split(",") if t.strip()]
+            all_tickers = sorted(set(text_tickers + related))
+
+            score, label = analyze_sentiment(title, summary)
+            cat = classify_news_category(title, summary)
+
+            article.update({
+                "id": str(n.get("id", abs(hash(title + n.get("source", ""))))),
+                "tickers": all_tickers,
+                "category": cat,
+                "sentiment": score,
+                "sentiment_label": label,
+                "relative_time": relative,
+                "image": n.get("image", ""),
+            })
+
+        result.append(article)
     return result
 
 @app.get("/news/alerts/clear")
@@ -783,6 +1668,102 @@ async def refresh_news():
     except Exception as e:
         print(f"News refresh error: {e}")
         return {"articles": []}
+
+@app.get("/news/intelligence")
+async def news_intelligence():
+    """Enriched news with sentiment, categories, trending topics, sector heatmap."""
+    cached = rdb.get(NEWS_INTEL_CACHE)
+    if cached:
+        return json.loads(cached)
+    try:
+        data = await finnhub_get("/news", {"category": "general"})
+        items = data[:50] if isinstance(data, list) else []
+        articles = _map_finnhub_news(items, enrich=True)
+
+        bull = sum(1 for a in articles if a.get("sentiment_label") == "bullish")
+        bear = sum(1 for a in articles if a.get("sentiment_label") == "bearish")
+        neutral = sum(1 for a in articles if a.get("sentiment_label") == "neutral")
+        total = len(articles)
+        top_tickers = {}
+        for a in articles:
+            for t in a.get("tickers", []):
+                top_tickers[t] = top_tickers.get(t, 0) + 1
+        most_mentioned = max(top_tickers, key=top_tickers.get) if top_tickers else "---"
+
+        topics = extract_trending_topics(articles)
+        heatmap = build_sector_heatmap(articles)
+        timeline = group_by_timeline(articles)
+
+        result = {
+            "articles": articles,
+            "stats": {
+                "total_today": total,
+                "most_mentioned_ticker": most_mentioned,
+                "ticker_counts": dict(sorted(top_tickers.items(), key=lambda x: -x[1])[:10]),
+                "sentiment_breakdown": {"bullish": bull, "bearish": bear, "neutral": neutral, "bullish_pct": round(bull / total * 100, 1) if total else 50},
+                "trending_topics_count": len(topics),
+            },
+            "trending_topics": topics,
+            "sector_heatmap": heatmap,
+            "timeline_groups": timeline,
+        }
+        rdb.setex(NEWS_INTEL_CACHE, 120, json.dumps(result))
+        return result
+    except Exception as e:
+        import traceback as _tb
+        print(f"News intelligence error: {e}")
+        _tb.print_exc()
+        return {"articles": [], "stats": {}, "trending_topics": [], "sector_heatmap": {}, "timeline_groups": {}}
+
+@app.get("/news/watchlist")
+async def watchlist_news():
+    """News for all watchlist + portfolio tickers, grouped by ticker."""
+    tickers = rdb.smembers(WATCHLIST_KEY)
+    portfolio_raw = rdb.hgetall("portfolio:default")
+    ptickers = set(portfolio_raw.keys()) if portfolio_raw else set()
+    all_tickers = sorted(set(t.upper() for t in tickers) | set(t.upper() for t in ptickers))
+    if not all_tickers:
+        return {"groups": [], "total": 0}
+    groups = []
+    today = datetime.now(timezone.utc).date()
+    week_ago = today - timedelta(days=7)
+    for ticker in all_tickers[:10]:
+        cache_key = f"cache:news:ticker:{ticker}"
+        cached = rdb.get(cache_key)
+        if cached:
+            articles = json.loads(cached)
+        else:
+            try:
+                data = await finnhub_get("/company-news", {"symbol": ticker, "from": week_ago.isoformat(), "to": today.isoformat()})
+                articles = _map_finnhub_news((data[:5] if isinstance(data, list) else []), enrich=True)
+                rdb.setex(cache_key, 600, json.dumps(articles))
+            except Exception:
+                articles = []
+        if articles:
+            groups.append({"ticker": ticker, "articles": articles})
+    return {"groups": groups, "total": sum(len(g["articles"]) for g in groups)}
+
+@app.post("/news/bookmark")
+async def bookmark_article(data: dict):
+    rdb.sadd(NEWS_BOOKMARKS_KEY, json.dumps(data))
+    return {"bookmarked": True}
+
+@app.delete("/news/bookmark")
+async def remove_bookmark(data: dict):
+    aid = str(data.get("id", ""))
+    for m in rdb.smembers(NEWS_BOOKMARKS_KEY):
+        try:
+            if str(json.loads(m).get("id", "")) == aid:
+                rdb.srem(NEWS_BOOKMARKS_KEY, m)
+                return {"removed": True}
+        except Exception:
+            pass
+    return {"removed": False}
+
+@app.get("/news/bookmarks")
+async def get_bookmarks():
+    members = rdb.smembers(NEWS_BOOKMARKS_KEY)
+    return {"bookmarks": [json.loads(m) for m in members]}
 
 @app.get("/news/{ticker}")
 async def get_ticker_news(ticker: str):
@@ -1377,6 +2358,42 @@ async def run_screener(
         return v
 
     filtered.sort(key=sort_key, reverse=(sort_dir == "desc"))
+
+    # ── Multi-Factor Scoring ──
+    for r in filtered:
+        if r.get("error"):
+            continue
+        # Value score (P/E based)
+        pe_val = r.get("pe")
+        if pe_val and pe_val > 0:
+            if pe_val < 12: v_score = 90
+            elif pe_val < 18: v_score = 70
+            elif pe_val < 25: v_score = 50
+            elif pe_val < 35: v_score = 30
+            else: v_score = 10
+        else:
+            v_score = 40
+        # Momentum score
+        chg = r.get("change_pct") or 0
+        from_52h = r.get("from_52h_pct") or 0
+        m_score = max(0, min(100, chg * 5 + (100 + from_52h)))
+        # Quality score
+        q_score = 50
+        if r.get("eps") and r["eps"] > 0: q_score += 20
+        if r.get("dividend_yield") and r["dividend_yield"] > 0: q_score += 15
+        fwd = r.get("forward_pe")
+        if fwd and pe_val and fwd < pe_val: q_score += 15
+        q_score = min(100, q_score)
+        composite = round(v_score * 0.33 + m_score * 0.34 + q_score * 0.33)
+        r["factor_scores"] = {"value": round(v_score), "momentum": round(m_score), "quality": round(q_score)}
+        r["composite_score"] = composite
+
+    # Momentum rank & percentile
+    scored = [r for r in filtered if r.get("factor_scores")]
+    scored.sort(key=lambda x: x["factor_scores"]["momentum"], reverse=True)
+    for i, r in enumerate(scored):
+        r["momentum_rank"] = i + 1
+        r["momentum_pctile"] = round((1 - i / max(len(scored) - 1, 1)) * 100)
 
     # Get unique sectors for filter dropdown
     all_sectors = sorted(set(r.get("sector", "") for r in results if r.get("sector")))
@@ -2121,6 +3138,790 @@ async def background_macro_refresh():
         except Exception as e:
             print(f"Macro refresh error: {e}")
 
+
+# ── Correlation Matrix ────────────────────────────────────────────────
+@app.get("/correlation-matrix")
+async def correlation_matrix(tickers: str = Query("SPY,QQQ,AAPL,MSFT,NVDA,TSLA,AMZN,GOOGL")):
+    """Compute return correlation matrix for given tickers."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    symbols = [t.strip().upper() for t in tickers.split(",") if t.strip()][:20]
+    try:
+        data = yf.download(symbols, period="3mo", interval="1d", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"matrix": [], "tickers": symbols}
+        closes = data["Close"] if len(symbols) > 1 else data[["Close"]].rename(columns={"Close": symbols[0]})
+        returns = closes.pct_change().dropna()
+        corr = returns.corr()
+        matrix = []
+        valid_tickers = [t for t in symbols if t in corr.columns]
+        for t1 in valid_tickers:
+            row = []
+            for t2 in valid_tickers:
+                row.append(round(float(corr.loc[t1, t2]), 3))
+            matrix.append(row)
+        return {"matrix": matrix, "tickers": valid_tickers}
+    except Exception as e:
+        return {"matrix": [], "tickers": symbols, "error": str(e)}
+
+
+# ── Sector Rotation Dashboard ─────────────────────────────────────────
+@app.get("/sector-rotation")
+async def sector_rotation():
+    """Sector ETF performance across timeframes for rotation analysis."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    sector_etfs = {
+        "XLK": "Technology", "XLV": "Healthcare", "XLF": "Financials",
+        "XLE": "Energy", "XLI": "Industrials", "XLY": "Cons. Disc.",
+        "XLP": "Cons. Staples", "XLU": "Utilities", "XLRE": "Real Estate",
+        "XLB": "Materials", "XLC": "Comm. Svcs", "SPY": "S&P 500",
+    }
+    symbols = list(sector_etfs.keys())
+    try:
+        data = yf.download(symbols, period="6mo", interval="1d", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"sectors": [], "error": "No data"}
+        results = []
+        for sym, name in sector_etfs.items():
+            try:
+                closes = data["Close"][sym] if len(symbols) > 1 else data["Close"]
+                if closes.empty or len(closes) < 2:
+                    continue
+                current = float(closes.iloc[-1])
+                d1 = round((current / float(closes.iloc[-2]) - 1) * 100, 2) if len(closes) > 1 else 0
+                w1 = round((current / float(closes.iloc[-5]) - 1) * 100, 2) if len(closes) > 5 else 0
+                m1 = round((current / float(closes.iloc[-21]) - 1) * 100, 2) if len(closes) > 21 else 0
+                m3 = round((current / float(closes.iloc[-63]) - 1) * 100, 2) if len(closes) > 63 else 0
+                momentum = round(d1 * 0.1 + w1 * 0.2 + m1 * 0.3 + m3 * 0.4, 2)
+                spy_closes = data["Close"]["SPY"]
+                spy_current = float(spy_closes.iloc[-1])
+                spy_m1 = round((spy_current / float(spy_closes.iloc[-21]) - 1) * 100, 2) if len(spy_closes) > 21 else 0
+                rel_strength = round(m1 - spy_m1, 2) if sym != "SPY" else 0
+                results.append({
+                    "symbol": sym, "name": name, "price": round(current, 2),
+                    "1d": d1, "1w": w1, "1m": m1, "3m": m3,
+                    "momentum": momentum, "relative_strength": rel_strength,
+                })
+            except Exception:
+                continue
+        results.sort(key=lambda x: x["momentum"], reverse=True)
+        leaders = [r["symbol"] for r in results[:3] if r["symbol"] != "SPY"]
+        laggards = [r["symbol"] for r in results[-3:] if r["symbol"] != "SPY"]
+        return {"sectors": results, "leaders": leaders, "laggards": laggards}
+    except Exception as e:
+        return {"sectors": [], "error": str(e)}
+
+
+# ── Monte Carlo Simulation ────────────────────────────────────────────
+@app.post("/monte-carlo")
+async def monte_carlo_simulation(body: dict):
+    """Run Monte Carlo simulation on portfolio."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    tickers = body.get("tickers", [])
+    weights = body.get("weights", [])
+    initial_value = body.get("initial_value", 100000)
+    days = body.get("days", 252)
+    simulations = min(body.get("simulations", 1000), 5000)
+    if not tickers:
+        raw = rdb.get("portfolio:default")
+        if raw:
+            port = json.loads(raw)
+            holdings = port.get("holdings", port)
+            if isinstance(holdings, dict):
+                tickers = list(holdings.keys())[:10]
+                total = sum(
+                    (h.get("shares", 0) * h.get("cost_basis", 0) if isinstance(h, dict) else 0)
+                    for h in holdings.values()
+                )
+                weights = [
+                    ((h.get("shares", 0) * h.get("cost_basis", 0)) / max(total, 1) if isinstance(h, dict) else 0)
+                    for h in holdings.values()
+                ]
+            else:
+                tickers = ["SPY"]
+                weights = [1.0]
+        else:
+            tickers = ["SPY"]
+            weights = [1.0]
+    if not weights or len(weights) != len(tickers):
+        weights = [1.0 / len(tickers)] * len(tickers)
+    try:
+        data = yf.download(tickers, period="2y", interval="1d", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"error": "No data"}
+        closes = data["Close"] if len(tickers) > 1 else data[["Close"]].rename(columns={"Close": tickers[0]})
+        returns = closes.pct_change().dropna()
+        port_returns = sum(returns[t] * w for t, w in zip(tickers, weights) if t in returns.columns)
+        mean_return = float(port_returns.mean())
+        std_return = float(port_returns.std())
+        import random
+        random.seed(42)
+        final_values = []
+        for _ in range(simulations):
+            value = initial_value
+            for d in range(days):
+                daily_return = random.gauss(mean_return, std_return)
+                value *= (1 + daily_return)
+            final_values.append(value)
+        final_values.sort()
+        p5 = final_values[int(simulations * 0.05)]
+        p25 = final_values[int(simulations * 0.25)]
+        p50 = final_values[int(simulations * 0.50)]
+        p75 = final_values[int(simulations * 0.75)]
+        p95 = final_values[int(simulations * 0.95)]
+        prob_loss = sum(1 for v in final_values if v < initial_value) / simulations
+        var_95 = initial_value - p5
+        var_99 = initial_value - final_values[int(simulations * 0.01)]
+        bucket_size = (max(final_values) - min(final_values)) / 30
+        dist = {}
+        for v in final_values:
+            bucket = round(min(final_values) + int((v - min(final_values)) / max(bucket_size, 1)) * bucket_size)
+            dist[bucket] = dist.get(bucket, 0) + 1
+        distribution = [{"value": k, "count": v} for k, v in sorted(dist.items())]
+        return {
+            "initial_value": initial_value, "days": days, "simulations": simulations,
+            "percentiles": {"p5": round(p5, 2), "p25": round(p25, 2), "p50": round(p50, 2),
+                           "p75": round(p75, 2), "p95": round(p95, 2)},
+            "expected_return": round((p50 / initial_value - 1) * 100, 2),
+            "prob_loss": round(prob_loss * 100, 1),
+            "var_95": round(var_95, 2), "var_99": round(var_99, 2),
+            "mean_daily_return": round(mean_return * 100, 4),
+            "daily_volatility": round(std_return * 100, 4),
+            "annual_volatility": round(std_return * (252 ** 0.5) * 100, 2),
+            "distribution": distribution,
+            "best_case": round(max(final_values), 2),
+            "worst_case": round(min(final_values), 2),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Portfolio Optimizer (Modern Portfolio Theory) ──────────────────────
+@app.post("/portfolio-optimize")
+async def portfolio_optimize(body: dict):
+    """Find optimal portfolio weights using MPT."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    tickers = body.get("tickers", ["SPY", "QQQ", "TLT", "GLD", "VNQ"])
+    target = body.get("target", "max_sharpe")
+    total_amount = body.get("amount", 100000)
+    try:
+        data = yf.download(tickers, period="2y", interval="1d", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"error": "No data"}
+        closes = data["Close"] if len(tickers) > 1 else data[["Close"]].rename(columns={"Close": tickers[0]})
+        returns = closes.pct_change().dropna()
+        valid_tickers = [t for t in tickers if t in returns.columns]
+        if len(valid_tickers) < 2:
+            return {"error": "Need at least 2 valid tickers"}
+        n = len(valid_tickers)
+        mean_returns = {t: float(returns[t].mean()) * 252 for t in valid_tickers}
+        vols = {t: float(returns[t].std()) * (252 ** 0.5) for t in valid_tickers}
+        import random
+        random.seed(42)
+        portfolios = []
+        best_sharpe = {"sharpe": -999, "weights": {}, "return": 0, "vol": 0}
+        min_vol_port = {"vol": 999, "weights": {}, "return": 0, "sharpe": 0}
+        for _ in range(10000):
+            w = [random.random() for _ in range(n)]
+            total_w = sum(w)
+            w = [x / total_w for x in w]
+            port_return = sum(w[i] * mean_returns[valid_tickers[i]] for i in range(n))
+            port_vol = sum(w[i] ** 2 * vols[valid_tickers[i]] ** 2 for i in range(n)) ** 0.5
+            sharpe = port_return / max(port_vol, 0.001)
+            if sharpe > best_sharpe["sharpe"]:
+                best_sharpe = {"sharpe": round(sharpe, 3), "weights": {valid_tickers[i]: round(w[i], 4) for i in range(n)},
+                              "return": round(port_return * 100, 2), "vol": round(port_vol * 100, 2)}
+            if port_vol < min_vol_port["vol"]:
+                min_vol_port = {"vol": round(port_vol * 100, 2), "weights": {valid_tickers[i]: round(w[i], 4) for i in range(n)},
+                               "return": round(port_return * 100, 2), "sharpe": round(sharpe, 3)}
+            portfolios.append({"return": round(port_return * 100, 2), "vol": round(port_vol * 100, 2), "sharpe": round(sharpe, 3)})
+        chosen = best_sharpe if target == "max_sharpe" else min_vol_port
+        allocations = []
+        for t in valid_tickers:
+            w = chosen["weights"].get(t, 0)
+            price = float(closes[t].iloc[-1])
+            dollar = total_amount * w
+            allocations.append({
+                "ticker": t, "weight": round(w * 100, 2), "price": round(price, 2),
+                "dollar_amount": round(dollar, 2), "shares": int(dollar / price) if price > 0 else 0,
+                "annual_return": round(mean_returns[t] * 100, 2), "annual_vol": round(vols[t] * 100, 2),
+            })
+        frontier = sorted(random.sample(portfolios, min(200, len(portfolios))), key=lambda x: x["vol"])
+        return {
+            "optimal": chosen, "allocations": allocations,
+            "target": target, "total_amount": total_amount,
+            "frontier": frontier[:100],
+            "max_sharpe": best_sharpe, "min_volatility": min_vol_port,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Market Breadth ────────────────────────────────────────────────────
+@app.get("/market-breadth")
+async def market_breadth():
+    """Market breadth indicators: advance/decline, new highs/lows, % above SMAs."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    sp500_sample = ["AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","UNH","JNJ",
+                    "JPM","V","PG","XOM","HD","MA","CVX","MRK","ABBV","PFE","COST","AVGO",
+                    "KO","PEP","LLY","TMO","WMT","MCD","CSCO","ABT","CRM","ACN","DHR","NKE",
+                    "TXN","NEE","UPS","PM","RTX","LOW","INTC","AMD","QCOM","INTU","AMAT"]
+    try:
+        data = yf.download(sp500_sample, period="1y", interval="1d", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"error": "No data"}
+        advancing = 0; declining = 0; unchanged = 0
+        above_20sma = 0; above_50sma = 0; above_200sma = 0
+        new_52w_high = 0; new_52w_low = 0
+        for sym in sp500_sample:
+            try:
+                closes = data["Close"][sym] if len(sp500_sample) > 1 else data["Close"]
+                if closes.empty or len(closes) < 2:
+                    continue
+                current = float(closes.iloc[-1])
+                prev = float(closes.iloc[-2])
+                if current > prev: advancing += 1
+                elif current < prev: declining += 1
+                else: unchanged += 1
+                sma20 = float(closes.tail(20).mean()) if len(closes) >= 20 else None
+                sma50 = float(closes.tail(50).mean()) if len(closes) >= 50 else None
+                sma200 = float(closes.tail(200).mean()) if len(closes) >= 200 else None
+                if sma20 and current > sma20: above_20sma += 1
+                if sma50 and current > sma50: above_50sma += 1
+                if sma200 and current > sma200: above_200sma += 1
+                high_52w = float(closes.max())
+                low_52w = float(closes.min())
+                if current >= high_52w * 0.98: new_52w_high += 1
+                if current <= low_52w * 1.02: new_52w_low += 1
+            except Exception:
+                continue
+        total = advancing + declining + unchanged
+        ad_ratio = round(advancing / max(declining, 1), 2)
+        pct_above_20 = round(above_20sma / max(total, 1) * 100, 1)
+        pct_above_50 = round(above_50sma / max(total, 1) * 100, 1)
+        pct_above_200 = round(above_200sma / max(total, 1) * 100, 1)
+        breadth_thrust = round((advancing - declining) / max(total, 1) * 100, 1)
+        return {
+            "advancing": advancing, "declining": declining, "unchanged": unchanged,
+            "advance_decline_ratio": ad_ratio, "breadth_thrust": breadth_thrust,
+            "pct_above_sma20": pct_above_20, "pct_above_sma50": pct_above_50,
+            "pct_above_sma200": pct_above_200,
+            "new_highs": new_52w_high, "new_lows": new_52w_low,
+            "mcclellan_oscillator": breadth_thrust,
+            "total_stocks": total,
+            "breadth_signal": "bullish" if pct_above_200 > 60 else "bearish" if pct_above_200 < 40 else "neutral",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Insider Trading ───────────────────────────────────────────────────
+@app.get("/insider/{ticker}")
+async def insider_trading(ticker: str):
+    """Get insider trading activity."""
+    ticker = ticker.upper()
+    try:
+        if yf:
+            tk = yf.Ticker(ticker)
+            insider_txns = []
+            try:
+                purchases = tk.insider_purchases
+                if purchases is not None and not purchases.empty:
+                    for _, row in purchases.head(10).iterrows():
+                        insider_txns.append({
+                            "name": str(row.get("Insider Trading", row.get("Text", "Unknown"))),
+                            "shares": str(row.get("Shares", "N/A")),
+                            "type": "purchase",
+                        })
+            except Exception:
+                pass
+            try:
+                roster = tk.insider_roster_holders
+                if roster is not None and not roster.empty:
+                    for _, row in roster.head(10).iterrows():
+                        insider_txns.append({
+                            "name": str(row.get("Name", "Unknown")),
+                            "position": str(row.get("Position", "N/A")),
+                            "shares": str(row.get("Shares", "N/A")),
+                            "latest_date": str(row.get("Latest Transaction Date", "N/A")),
+                            "type": "holder",
+                        })
+            except Exception:
+                pass
+            inst_holders = []
+            try:
+                inst = tk.institutional_holders
+                if inst is not None and not inst.empty:
+                    for _, row in inst.head(10).iterrows():
+                        inst_holders.append({
+                            "holder": str(row.get("Holder", "Unknown")),
+                            "shares": int(row.get("Shares", 0)) if not str(row.get("Shares", "")).startswith("N") else 0,
+                            "pct_held": str(row.get("% Out", "N/A")),
+                            "date_reported": str(row.get("Date Reported", "N/A")),
+                        })
+            except Exception:
+                pass
+            return {
+                "ticker": ticker, "insider_transactions": insider_txns,
+                "institutional_holders": inst_holders,
+                "net_insider_sentiment": "buying" if sum(1 for t in insider_txns if t.get("type") == "purchase") > 0 else "neutral",
+            }
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
+
+
+# ── Dark Pool / Large Block Detection ─────────────────────────────────
+@app.get("/dark-pool/{ticker}")
+async def dark_pool_activity(ticker: str, period: str = Query("1mo")):
+    """Detect unusual volume and potential block trades."""
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+    try:
+        data = yf.Ticker(ticker.upper()).history(period=period, interval="1d")
+        if data.empty:
+            return {"error": "No data"}
+        avg_vol = float(data["Volume"].mean())
+        results = []
+        for idx, row in data.iterrows():
+            vol = float(row["Volume"])
+            vol_ratio = round(vol / max(avg_vol, 1), 2)
+            price_range = float(row["High"] - row["Low"])
+            avg_range = float((data["High"] - data["Low"]).mean())
+            if vol_ratio > 2.0:
+                results.append({
+                    "date": idx.strftime("%Y-%m-%d"),
+                    "volume": int(vol), "avg_volume": int(avg_vol),
+                    "vol_ratio": vol_ratio,
+                    "close": round(float(row["Close"]), 2),
+                    "change_pct": round((float(row["Close"]) - float(row["Open"])) / max(float(row["Open"]), 0.01) * 100, 2),
+                    "range_vs_avg": round(price_range / max(avg_range, 0.01), 2),
+                    "signal": "block_buy" if float(row["Close"]) > float(row["Open"]) else "block_sell",
+                })
+        current = float(data["Close"].iloc[-1])
+        today_vol = float(data["Volume"].iloc[-1])
+        today_ratio = round(today_vol / max(avg_vol, 1), 2)
+        return {
+            "ticker": ticker.upper(), "unusual_days": results,
+            "avg_volume": int(avg_vol), "today_volume": int(today_vol),
+            "today_vol_ratio": today_ratio,
+            "accumulation": sum(1 for r in results if r["signal"] == "block_buy"),
+            "distribution": sum(1 for r in results if r["signal"] == "block_sell"),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ── Dashboard Market Pulse ────────────────────────────────────────────
+MARKET_PULSE_CACHE = "cache:market_pulse"
+
+@app.get("/dashboard/market-pulse")
+async def dashboard_market_pulse():
+    """Aggregated market intelligence: regime, fear/greed, sectors, yields."""
+    cached = rdb.get(MARKET_PULSE_CACHE)
+    if cached:
+        return json.loads(cached)
+    result = {}
+    vix_current = 20
+    current = 0; sma50 = 1
+    # 1. Market Regime
+    try:
+        spy_hist = yf.Ticker("SPY").history(period="3mo", interval="1d")
+        vix_tk = yf.Ticker("^VIX")
+        vix_hist = vix_tk.history(period="1mo", interval="1d")
+        spy_closes = [float(v) for v in spy_hist["Close"]]
+        vix_current = float(vix_hist["Close"].iloc[-1]) if not vix_hist.empty else 20
+        sma20 = sum(spy_closes[-20:]) / 20 if len(spy_closes) >= 20 else spy_closes[-1]
+        sma50 = sum(spy_closes[-50:]) / 50 if len(spy_closes) >= 50 else spy_closes[-1]
+        current = spy_closes[-1]
+        trend_score = 0
+        if current > sma20: trend_score += 1
+        if current > sma50: trend_score += 1
+        if sma20 > sma50: trend_score += 1
+        if vix_current < 15: vol_regime = "low_vol"
+        elif vix_current < 22: vol_regime = "normal"
+        elif vix_current < 30: vol_regime = "elevated"
+        else: vol_regime = "crisis"
+        if trend_score >= 2 and vix_current < 22:
+            regime = "BULL"; confidence = min(90, 60 + trend_score * 10)
+        elif trend_score <= 1 and vix_current > 25:
+            regime = "BEAR"; confidence = min(90, 50 + int(30 - min(vix_current, 30)))
+        elif vix_current > 22:
+            regime = "VOLATILE"; confidence = min(85, 50 + int(vix_current - 22) * 3)
+        else:
+            regime = "NEUTRAL"; confidence = 50
+        result["regime"] = {
+            "label": regime, "confidence": confidence,
+            "vix": round(vix_current, 2), "vol_regime": vol_regime,
+            "spy_vs_sma20": round((current / sma20 - 1) * 100, 2),
+            "spy_vs_sma50": round((current / sma50 - 1) * 100, 2),
+            "trend_score": trend_score,
+        }
+    except Exception as e:
+        result["regime"] = {"label": "UNKNOWN", "confidence": 0, "error": str(e)}
+    # 2. Fear & Greed Composite
+    try:
+        vix_score = max(0, min(100, 100 - (vix_current - 10) * 5))
+        momentum_pct = (current / sma50 - 1) * 100 if sma50 > 0 else 0
+        momentum_score = max(0, min(100, 50 + momentum_pct * 5))
+        macro_cached = rdb.get("cache:macro:quotes")
+        pos_count = 0; total_count = 0
+        if macro_cached:
+            macro_items = json.loads(macro_cached)
+            for m in macro_items:
+                if m.get("change_pct") is not None:
+                    total_count += 1
+                    if m["change_pct"] > 0: pos_count += 1
+        breadth_score = (pos_count / max(total_count, 1)) * 100
+        fear_greed = round(vix_score * 0.35 + momentum_score * 0.35 + breadth_score * 0.30)
+        if fear_greed >= 75: fg_label = "EXTREME GREED"
+        elif fear_greed >= 55: fg_label = "GREED"
+        elif fear_greed >= 45: fg_label = "NEUTRAL"
+        elif fear_greed >= 25: fg_label = "FEAR"
+        else: fg_label = "EXTREME FEAR"
+        result["fear_greed"] = {
+            "score": fear_greed, "label": fg_label,
+            "components": {"vix": round(vix_score), "momentum": round(momentum_score), "breadth": round(breadth_score)},
+        }
+    except Exception:
+        result["fear_greed"] = {"score": 50, "label": "NEUTRAL", "components": {}}
+    # 3. Sector Performance
+    sector_etfs = {
+        "XLK": "Tech", "XLV": "Health", "XLF": "Financials",
+        "XLE": "Energy", "XLI": "Industrial", "XLY": "Cons Disc",
+        "XLP": "Cons Stap", "XLU": "Utilities", "XLRE": "Real Est",
+        "XLB": "Materials", "XLC": "Comm Svcs",
+    }
+    try:
+        sector_results = []
+        for sym, name in sector_etfs.items():
+            try:
+                tk = yf.Ticker(sym)
+                fi = tk.fast_info
+                price = getattr(fi, "last_price", None)
+                prev = getattr(fi, "previous_close", None)
+                chg_pct = round((price - prev) / prev * 100, 2) if price and prev else 0
+                sector_results.append({"symbol": sym, "name": name, "change_pct": chg_pct, "price": round(price, 2) if price else 0})
+            except Exception:
+                sector_results.append({"symbol": sym, "name": name, "change_pct": 0, "price": 0})
+        sector_results.sort(key=lambda x: x["change_pct"], reverse=True)
+        result["sectors"] = sector_results
+    except Exception:
+        result["sectors"] = []
+    # 4. Yield Curve Proxy
+    try:
+        tlt = yf.Ticker("TLT").fast_info
+        shy = yf.Ticker("SHY").fast_info
+        tlt_price = getattr(tlt, "last_price", None)
+        shy_price = getattr(shy, "last_price", None)
+        tlt_prev = getattr(tlt, "previous_close", None)
+        shy_prev = getattr(shy, "previous_close", None)
+        tlt_chg = round((tlt_price - tlt_prev) / tlt_prev * 100, 2) if tlt_price and tlt_prev else 0
+        shy_chg = round((shy_price - shy_prev) / shy_prev * 100, 2) if shy_price and shy_prev else 0
+        result["yields"] = {
+            "tlt_price": round(tlt_price, 2) if tlt_price else None,
+            "tlt_change_pct": tlt_chg,
+            "shy_price": round(shy_price, 2) if shy_price else None,
+            "shy_change_pct": shy_chg,
+            "spread_signal": "steepening" if tlt_chg < shy_chg else "flattening",
+        }
+    except Exception:
+        result["yields"] = {}
+    rdb.setex(MARKET_PULSE_CACHE, 60, json.dumps(result))
+    return result
+
+
+# ── Portfolio Risk Analytics ──────────────────────────────────────────
+@app.get("/portfolio/{name}/risk-analytics")
+async def portfolio_risk_analytics(name: str):
+    """Professional portfolio risk metrics: VaR, CVaR, Sharpe, drawdown, beta."""
+    raw = rdb.get(f"portfolio:{name}")
+    if not raw or yf is None:
+        return {"error": "No portfolio data or yfinance unavailable"}
+    data = json.loads(raw)
+    holdings = data.get("holdings", {})
+    if isinstance(holdings, list):
+        h_dict = {}
+        for item in holdings:
+            t = item.get("ticker", "")
+            if t: h_dict[t] = {"shares": item.get("shares", 0), "cost_basis": item.get("cost_basis", 0)}
+        holdings = h_dict
+    cash = data.get("cash", 0)
+    if not holdings:
+        return {"error": "Empty portfolio"}
+    tickers = list(holdings.keys())
+    try:
+        import pandas as pd
+        dl_tickers = tickers + ["SPY"]
+        df = yf.download(dl_tickers, period="6mo", interval="1d", progress=False, auto_adjust=True)
+    except Exception as e:
+        return {"error": f"Data fetch failed: {e}"}
+    if df.empty:
+        return {"error": "No price data"}
+    multi = len(dl_tickers) > 1
+    weights = {}; total_val = cash
+    for t in tickers:
+        try:
+            price = float(df["Close"][t].iloc[-1]) if multi else float(df["Close"].iloc[-1])
+            total_val += price * holdings[t].get("shares", 0)
+        except Exception:
+            total_val += holdings[t].get("cost_basis", 0) * holdings[t].get("shares", 0)
+    for t in tickers:
+        try:
+            price = float(df["Close"][t].iloc[-1]) if multi else float(df["Close"].iloc[-1])
+            weights[t] = (price * holdings[t].get("shares", 0)) / total_val if total_val > 0 else 0
+        except Exception:
+            weights[t] = 0
+    port_returns = []; spy_returns = []; dates = []
+    for i in range(1, len(df)):
+        daily_ret = 0
+        for t in tickers:
+            try:
+                prev_p = float(df["Close"][t].iloc[i-1]) if multi else float(df["Close"].iloc[i-1])
+                curr_p = float(df["Close"][t].iloc[i]) if multi else float(df["Close"].iloc[i])
+                if prev_p > 0: daily_ret += weights.get(t, 0) * ((curr_p / prev_p) - 1)
+            except Exception:
+                pass
+        port_returns.append(daily_ret)
+        try:
+            spy_prev = float(df["Close"]["SPY"].iloc[i-1]) if multi else float(df["Close"].iloc[i-1])
+            spy_curr = float(df["Close"]["SPY"].iloc[i]) if multi else float(df["Close"].iloc[i])
+            spy_returns.append((spy_curr / spy_prev) - 1 if spy_prev > 0 else 0)
+        except Exception:
+            spy_returns.append(0)
+        try:
+            dates.append(df.index[i].strftime("%Y-%m-%d"))
+        except Exception:
+            dates.append(str(i))
+    if not port_returns:
+        return {"error": "Insufficient data"}
+    n = len(port_returns)
+    sorted_rets = sorted(port_returns)
+    var_95 = -sorted_rets[max(int(n * 0.05), 0)] * total_val
+    var_99 = -sorted_rets[max(int(n * 0.01), 0)] * total_val
+    cutoff_95 = max(int(n * 0.05), 1)
+    cvar_95 = -sum(sorted_rets[:cutoff_95]) / cutoff_95 * total_val
+    avg_ret = sum(port_returns) / n
+    std_ret = (sum((r - avg_ret)**2 for r in port_returns) / max(n-1, 1)) ** 0.5
+    sharpe = ((avg_ret - 0.05/252) / std_ret * (252 ** 0.5)) if std_ret > 0 else 0
+    downside = [r for r in port_returns if r < 0]
+    downside_std = (sum(r**2 for r in downside) / max(len(downside)-1, 1)) ** 0.5 if downside else 0.001
+    sortino = ((avg_ret - 0.05/252) / downside_std * (252 ** 0.5)) if downside_std > 0 else 0
+    cumulative = [1.0]
+    for r in port_returns:
+        cumulative.append(cumulative[-1] * (1 + r))
+    peak = cumulative[0]; max_dd = 0; dd_series = []
+    for i, v in enumerate(cumulative):
+        peak = max(peak, v)
+        dd = (v / peak - 1) * 100
+        dd_series.append({"date": dates[i-1] if i > 0 and i-1 < len(dates) else dates[0] if dates else "", "drawdown": round(dd, 2)})
+        max_dd = min(max_dd, dd)
+    if spy_returns:
+        spy_avg = sum(spy_returns) / len(spy_returns)
+        cov = sum((p - avg_ret) * (s - spy_avg) for p, s in zip(port_returns, spy_returns)) / max(n-1, 1)
+        spy_var = sum((s - spy_avg)**2 for s in spy_returns) / max(n-1, 1)
+        beta = cov / spy_var if spy_var > 0 else 1.0
+    else:
+        beta = 1.0
+    ann_ret = avg_ret * 252
+    calmar = ann_ret / abs(max_dd / 100) if max_dd != 0 else 0
+    ann_vol = std_ret * (252 ** 0.5) * 100
+    return {
+        "total_value": round(total_val, 2),
+        "var_95_1d": round(var_95, 2), "var_99_1d": round(var_99, 2), "cvar_95_1d": round(cvar_95, 2),
+        "sharpe_ratio": round(sharpe, 2), "sortino_ratio": round(sortino, 2), "beta": round(beta, 2),
+        "max_drawdown_pct": round(max_dd, 2), "calmar_ratio": round(calmar, 2),
+        "annualized_vol": round(ann_vol, 2), "annualized_return": round(ann_ret * 100, 2),
+        "drawdown_series": dd_series[-60:],
+        "lookback_days": n,
+    }
+
+
+# ── Portfolio Stress Scenarios ────────────────────────────────────────
+@app.get("/portfolio/{name}/stress-scenarios")
+async def portfolio_stress_scenarios(name: str):
+    """Run stress test scenarios against portfolio holdings."""
+    raw = rdb.get(f"portfolio:{name}")
+    if not raw or yf is None:
+        return {"scenarios": []}
+    data = json.loads(raw)
+    holdings = data.get("holdings", {})
+    if isinstance(holdings, list):
+        h_dict = {}
+        for item in holdings:
+            t = item.get("ticker", "")
+            if t: h_dict[t] = {"shares": item.get("shares", 0), "cost_basis": item.get("cost_basis", 0)}
+        holdings = h_dict
+    cash = data.get("cash", 0)
+    tickers = list(holdings.keys())
+    positions = []; total_val = cash
+    for t in tickers:
+        try:
+            info = yf.Ticker(t).info
+            price = info.get("currentPrice") or info.get("previousClose", 0)
+            beta_val = info.get("beta", 1.0) or 1.0
+            sector = info.get("sector", "Unknown")
+            mkt_val = price * holdings[t].get("shares", 0)
+            total_val += mkt_val
+            positions.append({"ticker": t, "price": price, "beta": beta_val, "sector": sector, "mkt_val": mkt_val})
+        except Exception:
+            cb = holdings[t].get("cost_basis", 0); sh = holdings[t].get("shares", 0)
+            mkt_val = cb * sh; total_val += mkt_val
+            positions.append({"ticker": t, "price": cb, "beta": 1.0, "sector": "Unknown", "mkt_val": mkt_val})
+    scenarios = [
+        {"name": "Market -10%", "desc": "Broad market correction", "spy_move": -10, "icon": "\u26a1", "sector_adj": {}},
+        {"name": "Market -20%", "desc": "Bear market", "spy_move": -20, "icon": "\U0001f4c9", "sector_adj": {}},
+        {"name": "Flash Crash -5%", "desc": "Single day flash crash", "spy_move": -5, "icon": "\U0001f4a5", "sector_adj": {}},
+        {"name": "Rate Shock", "desc": "100bps rate hike, growth crushed", "spy_move": -8, "icon": "\U0001f3e6",
+         "sector_adj": {"Technology": 1.3, "Real Estate": 1.5, "Consumer Cyclical": 1.2}},
+        {"name": "Recession", "desc": "GDP -2%, broad selloff", "spy_move": -25, "icon": "\U0001f534",
+         "sector_adj": {"Consumer Cyclical": 1.4, "Technology": 1.1, "Energy": 1.3, "Industrials": 1.2}},
+        {"name": "Bull +15%", "desc": "Strong rally, soft landing", "spy_move": 15, "icon": "\U0001f7e2", "sector_adj": {}},
+    ]
+    results = []
+    for scenario in scenarios:
+        spy_move = scenario["spy_move"]
+        sector_adj = scenario.get("sector_adj", {})
+        portfolio_impact = 0; position_impacts = []
+        for pos in positions:
+            multiplier = sector_adj.get(pos["sector"], 1.0)
+            stock_move = spy_move * pos["beta"] * multiplier
+            dollar_impact = pos["mkt_val"] * (stock_move / 100)
+            portfolio_impact += dollar_impact
+            position_impacts.append({"ticker": pos["ticker"], "move_pct": round(stock_move, 1), "dollar_impact": round(dollar_impact, 2)})
+        results.append({
+            "name": scenario["name"], "desc": scenario["desc"], "icon": scenario["icon"],
+            "portfolio_impact": round(portfolio_impact, 2),
+            "portfolio_impact_pct": round(portfolio_impact / max(total_val, 1) * 100, 2),
+            "positions": sorted(position_impacts, key=lambda x: x["dollar_impact"]),
+        })
+    return {"total_value": round(total_val, 2), "scenarios": results}
+
+
+# ── Community: Discord Presence (Lanyard API) ─────────────────────────
+@app.get("/community/discord/presence")
+async def discord_presence():
+    """Get Discord user presence via Lanyard API (free, no auth)."""
+    if not DISCORD_USER_ID:
+        return {"error": "DISCORD_USER_ID not configured", "status": "offline", "username": "Not configured"}
+    cached = rdb.get("cache:discord:presence")
+    if cached:
+        return json.loads(cached)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(f"https://api.lanyard.rest/v1/users/{DISCORD_USER_ID}")
+            data = r.json()
+        if not data.get("success"):
+            return {"error": data.get("error", {}).get("message", "Lanyard error"), "status": "offline"}
+        d = data["data"]
+        user = d.get("discord_user", {})
+        avatar_hash = user.get("avatar", "")
+        avatar_url = f"https://cdn.discordapp.com/avatars/{user.get('id', '')}/{avatar_hash}.png?size=128" if avatar_hash else ""
+        activities = []
+        for a in d.get("activities", []):
+            if a.get("type") == 4:  # Custom status
+                continue
+            activities.append({
+                "name": a.get("name", ""),
+                "type": a.get("type", 0),
+                "details": a.get("details", ""),
+                "state": a.get("state", ""),
+            })
+        spotify = None
+        if d.get("spotify"):
+            sp = d["spotify"]
+            spotify = {
+                "song": sp.get("song", ""),
+                "artist": sp.get("artist", ""),
+                "album": sp.get("album", ""),
+                "album_art_url": sp.get("album_art_url", ""),
+            }
+        custom_status = None
+        for a in d.get("activities", []):
+            if a.get("type") == 4:
+                custom_status = a.get("state", "")
+                break
+        result = {
+            "user_id": user.get("id", ""),
+            "username": user.get("global_name") or user.get("username", "Unknown"),
+            "discriminator": user.get("discriminator", "0"),
+            "avatar_url": avatar_url,
+            "status": d.get("discord_status", "offline"),
+            "activities": activities,
+            "spotify": spotify,
+            "custom_status": custom_status,
+        }
+        rdb.setex("cache:discord:presence", 15, json.dumps(result))
+        return result
+    except Exception as e:
+        return {"error": str(e), "status": "offline", "username": "Error"}
+
+
+# ── Community: Discord Channel Feed ───────────────────────────────────
+@app.get("/community/discord/feed")
+async def discord_feed():
+    """Read last 20 messages from configured Discord channel via Bot API."""
+    if not DISCORD_BOT_TOKEN or not DISCORD_CHANNEL_ID:
+        return {"error": "Discord bot not configured", "channel_id": "", "messages": []}
+    cached = rdb.get("cache:discord:feed")
+    if cached:
+        return json.loads(cached)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"https://discord.com/api/v10/channels/{DISCORD_CHANNEL_ID}/messages?limit=20",
+                headers={"Authorization": f"Bot {DISCORD_BOT_TOKEN}"}
+            )
+            msgs = r.json()
+        if isinstance(msgs, dict) and msgs.get("code"):
+            return {"error": msgs.get("message", "Discord API error"), "channel_id": DISCORD_CHANNEL_ID, "messages": []}
+        messages = []
+        for m in msgs if isinstance(msgs, list) else []:
+            author = m.get("author", {})
+            avatar_hash = author.get("avatar", "")
+            avatar_url = f"https://cdn.discordapp.com/avatars/{author.get('id', '')}/{avatar_hash}.png?size=64" if avatar_hash else ""
+            messages.append({
+                "id": m.get("id", ""),
+                "content": m.get("content", ""),
+                "author": {
+                    "username": author.get("global_name") or author.get("username", "Unknown"),
+                    "avatar_url": avatar_url,
+                },
+                "timestamp": m.get("timestamp", ""),
+                "attachments": [{"url": a.get("url", ""), "filename": a.get("filename", "")} for a in m.get("attachments", [])],
+                "embeds": len(m.get("embeds", [])),
+            })
+        result = {"channel_id": DISCORD_CHANNEL_ID, "messages": messages}
+        rdb.setex("cache:discord:feed", 30, json.dumps(result))
+        return result
+    except Exception as e:
+        return {"error": str(e), "channel_id": DISCORD_CHANNEL_ID, "messages": []}
+
+
+# ── Community: Twitter oEmbed Proxy ───────────────────────────────────
+@app.get("/community/twitter/oembed")
+async def twitter_oembed(url: str = Query(...), theme: str = Query("dark")):
+    """Proxy Twitter oEmbed API (free, no auth)."""
+    cache_key = f"cache:twitter:oembed:{url}:{theme}"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                "https://publish.twitter.com/oembed",
+                params={"url": url, "omit_script": "true", "theme": theme, "dnt": "true"}
+            )
+            data = r.json()
+        rdb.setex(cache_key, 300, json.dumps(data))
+        return data
+    except Exception as e:
+        return {"html": "", "error": str(e)}
+
+
 @app.on_event("startup")
 async def startup():
     global rh_logged_in
@@ -2139,429 +3940,318 @@ async def startup():
             print(f"⚠️  Robinhood: needs MFA — POST /rh/login with mfa_code")
             rh_logged_in = False
 
+    # Auto-sync Fidelity CSV on startup
+    try:
+        result = _sync_fidelity_csv()
+        if result.get("synced"):
+            print(f"📊 Fidelity startup sync: imported {result['source']}")
+        elif result.get("reason") == "already_current":
+            print(f"📊 Fidelity: positions.csv is current (from {result.get('data_date', '?')})")
+        else:
+            print("📊 Fidelity: no CSV found — export from Fidelity.com to auto-import")
+    except Exception as e:
+        print(f"⚠️  Fidelity startup sync error: {e}")
+
     asyncio.create_task(check_alerts())
     asyncio.create_task(background_news_refresh())
     asyncio.create_task(background_macro_refresh())
+    asyncio.create_task(_periodic_fidelity_sync())
+    asyncio.create_task(_periodic_price_refresh())
 
 # ── OPTIONS JOURNAL ──────────────────────────────────────────
 import pathlib as _pathlib
 _OPTIONS_DATA_PATH = _pathlib.Path(__file__).parent / "options_data.json"
 
+
 @app.get("/options-journal")
-async def get_options_journal():
-    import json
-    if _OPTIONS_DATA_PATH.exists():
-        with open(_OPTIONS_DATA_PATH) as f:
-            return json.load(f)
-    return {"error": "options_data.json not found"}
+async def get_options_journal(live: bool = True):
+    """Return parsed options journal from saved data file."""
+    import json as _json, os as _os
+    data_file = _os.path.expanduser("~/dev/stock-platform/.options_trades.json")
+    if not _os.path.exists(data_file):
+        return {"open_positions": [], "closed_trades": [], "orphan_closings": [],
+                "summary": {"total_pnl": 0, "total_trades": 0, "win_rate": 0,
+                            "winners": 0, "losers": 0, "avg_win": 0, "avg_loss": 0, "open_count": 0}}
+    with open(data_file) as f:
+        data = _json.load(f)
+    if live and data.get("open_positions"):
+        import yfinance as yf
+        from datetime import date as _date
+        tickers = list({p["ticker"] for p in data["open_positions"]})
+        prices = {}
+        try:
+            dl = yf.download(tickers, period="1d", progress=False, auto_adjust=True)
+            if len(tickers) == 1:
+                prices[tickers[0]] = float(dl["Close"].iloc[-1])
+            else:
+                for tk in tickers:
+                    try: prices[tk] = float(dl["Close"][tk].iloc[-1])
+                    except: pass
+        except: pass
+        for pos in data["open_positions"]:
+            px = prices.get(pos["ticker"])
+            pos["current_stock_price"] = round(px, 2) if px else None
+            if px:
+                pos["itm"] = px > pos["strike"] if pos.get("call_put") == "Call" else px < pos["strike"]
+                pos["distance_to_strike"] = round(((pos["strike"] - px) / px) * 100, 1) if pos.get("is_short") else round(((px - pos["strike"]) / pos["strike"]) * 100, 1)
+    return data
 
 @app.get("/options-journal/summary")
 async def get_options_journal_summary():
-    import json
-    if _OPTIONS_DATA_PATH.exists():
-        with open(_OPTIONS_DATA_PATH) as f:
-            data = json.load(f)
-            return data.get("summary", {})
-    return {"error": "options_data.json not found"}
-
-# ── OPTIONS JOURNAL V2: CSV Upload, AI Analysis, Live Positions ──────
-
-import io, csv, re, json
-from datetime import datetime, timezone
-from collections import defaultdict
-
-def parse_fidelity_csv(csv_text: str):
-    """Parse Fidelity CSV text into options trades"""
-    lines = csv_text.strip().split('\n')
-    header_idx = None
-    for i, line in enumerate(lines):
-        if 'Run Date' in line:
-            header_idx = i
-            break
-    if header_idx is None:
-        return []
-
-    reader = csv.DictReader(lines[header_idx:])
-    options_trades = []
-    for row in reader:
-        if not row.get('Run Date'):
-            continue
-        action = (row.get('Action') or '')
-        symbol = (row.get('Symbol') or '').strip()
-        is_option = any(kw in action.upper() for kw in ['OPENING TRANSACTION', 'CLOSING TRANSACTION', 'EXPIRED', 'ASSIGNED'])
-        if not is_option:
-            continue
-        trade = {
-            'date': row['Run Date'],
-            'account': (row.get('Account') or '').strip('"'),
-            'action': action.strip('"'),
-            'symbol': symbol,
-            'description': (row.get('Description') or '').strip('"'),
-            'price': float(row['Price ($)']) if row.get('Price ($)') else 0,
-            'quantity': int(float(row.get('Quantity', '0') or '0')),
-            'commission': float(row.get('Commission ($)', '0') or '0'),
-            'fees': float(row.get('Fees ($)', '0') or '0'),
-            'amount': float(row.get('Amount ($)', '0') or '0'),
-        }
-        if 'SOLD OPENING' in action.upper():
-            trade['trade_type'] = 'SELL_OPEN'
-        elif 'BOUGHT OPENING' in action.upper():
-            trade['trade_type'] = 'BUY_OPEN'
-        elif 'SOLD CLOSING' in action.upper():
-            trade['trade_type'] = 'SELL_CLOSE'
-        elif 'BOUGHT CLOSING' in action.upper():
-            trade['trade_type'] = 'BUY_CLOSE'
-        elif 'EXPIRED' in action.upper():
-            trade['trade_type'] = 'EXPIRED'
-        elif 'ASSIGNED' in action.upper():
-            trade['trade_type'] = 'ASSIGNED'
-        else:
-            trade['trade_type'] = 'OTHER'
-        if symbol.startswith('-'):
-            sym = symbol[1:]
-            match = re.match(r'([A-Z]+)(\d{6})([CP])([\d.]+)', sym)
-            if match:
-                trade['ticker'] = match.group(1)
-                ds = match.group(2)
-                trade['option_type'] = 'CALL' if match.group(3) == 'C' else 'PUT'
-                trade['strike'] = float(match.group(4))
-                trade['expiry'] = f"20{ds[:2]}-{ds[2:4]}-{ds[4:6]}"
-            else:
-                trade['ticker'] = sym
-                trade['option_type'] = 'CALL' if 'CALL' in action.upper() else 'PUT'
-                trade['strike'] = 0
-                trade['expiry'] = ''
-        else:
-            trade['ticker'] = symbol
-            trade['option_type'] = 'CALL' if 'CALL' in action.upper() else 'PUT'
-            trade['strike'] = 0
-            trade['expiry'] = ''
-        options_trades.append(trade)
-    return options_trades
-
-def build_journal_data(options_trades):
-    """Group trades into completed round trips and compute stats"""
-    contract_groups = defaultdict(list)
-    for t in options_trades:
-        key = f"{t.get('ticker','')}-{t.get('expiry','')}-{t.get('option_type','')}-{t.get('strike','')}-{t.get('account','')}"
-        contract_groups[key].append(t)
-
-    completed_trades = []
-    open_positions = []
-
-    for key, trades in contract_groups.items():
-        trades.sort(key=lambda x: datetime.strptime(x['date'], '%m/%d/%Y'))
-        opens = [t for t in trades if t['trade_type'] in ('SELL_OPEN', 'BUY_OPEN')]
-        closes = [t for t in trades if t['trade_type'] in ('SELL_CLOSE', 'BUY_CLOSE', 'EXPIRED', 'ASSIGNED')]
-        total_open_amount = sum(t['amount'] for t in opens)
-        total_close_amount = sum(t['amount'] for t in closes)
-        total_commissions = sum(t['commission'] + t['fees'] for t in trades)
-        net_pnl = total_open_amount + total_close_amount
-        if opens:
-            if opens[0]['trade_type'] == 'SELL_OPEN':
-                strategy = 'Covered Call' if opens[0]['option_type'] == 'CALL' else 'Cash-Secured Put'
-            else:
-                strategy = 'Long Call' if opens[0]['option_type'] == 'CALL' else 'Long Put'
-        else:
-            strategy = 'Unknown'
-        total_contracts = sum(abs(t['quantity']) for t in opens) if opens else 0
-        is_closed = len(closes) > 0
-        entry = {
-            'ticker': trades[0].get('ticker', ''),
-            'option_type': trades[0].get('option_type', ''),
-            'strike': trades[0].get('strike', 0),
-            'expiry': trades[0].get('expiry', ''),
-            'strategy': strategy,
-            'contracts': total_contracts,
-            'open_date': opens[0]['date'] if opens else '',
-            'close_date': closes[-1]['date'] if closes else '',
-            'open_premium': total_open_amount,
-            'close_premium': total_close_amount,
-            'net_pnl': round(net_pnl, 2),
-            'commissions': round(total_commissions, 2),
-            'net_after_fees': round(net_pnl, 2),
-            'status': 'CLOSED' if is_closed else 'OPEN',
-            'close_type': closes[-1]['trade_type'] if closes else '',
-            'account': trades[0].get('account', ''),
-        }
-        if is_closed:
-            completed_trades.append(entry)
-        else:
-            open_positions.append(entry)
-
-    completed_trades.sort(key=lambda x: datetime.strptime(x['open_date'], '%m/%d/%Y') if x['open_date'] else datetime.min)
-
-    # Stats
-    winners = [t for t in completed_trades if t['net_pnl'] > 0]
-    losers = [t for t in completed_trades if t['net_pnl'] < 0]
-    total_pnl = sum(t['net_pnl'] for t in completed_trades)
-    total_commissions = sum(t['commissions'] for t in completed_trades)
-
-    pnl_by_ticker = defaultdict(float)
-    trades_by_ticker = defaultdict(int)
-    for t in completed_trades:
-        pnl_by_ticker[t['ticker']] += t['net_pnl']
-        trades_by_ticker[t['ticker']] += 1
-
-    pnl_by_strategy = defaultdict(float)
-    trades_by_strategy = defaultdict(int)
-    for t in completed_trades:
-        pnl_by_strategy[t['strategy']] += t['net_pnl']
-        trades_by_strategy[t['strategy']] += 1
-
-    monthly_pnl = defaultdict(float)
-    monthly_trades = defaultdict(int)
-    for t in completed_trades:
-        if t['close_date']:
-            dt = datetime.strptime(t['close_date'], '%m/%d/%Y')
-            mk = dt.strftime('%Y-%m')
-            monthly_pnl[mk] += t['net_pnl']
-            monthly_trades[mk] += 1
-
-    return {
-        'summary': {
-            'total_trades': len(completed_trades),
-            'winners': len(winners),
-            'losers': len(losers),
-            'breakeven': len([t for t in completed_trades if t['net_pnl'] == 0]),
-            'win_rate': round(len(winners)/len(completed_trades)*100, 1) if completed_trades else 0,
-            'total_pnl': round(total_pnl, 2),
-            'total_commissions': round(total_commissions, 2),
-            'avg_win': round(sum(t['net_pnl'] for t in winners)/len(winners), 2) if winners else 0,
-            'avg_loss': round(sum(t['net_pnl'] for t in losers)/len(losers), 2) if losers else 0,
-            'best_trade': round(max(t['net_pnl'] for t in completed_trades), 2) if completed_trades else 0,
-            'worst_trade': round(min(t['net_pnl'] for t in completed_trades), 2) if completed_trades else 0,
-            'largest_win_ticker': max(completed_trades, key=lambda x: x['net_pnl'])['ticker'] if completed_trades else '',
-            'largest_loss_ticker': min(completed_trades, key=lambda x: x['net_pnl'])['ticker'] if completed_trades else '',
-        },
-        'completed_trades': completed_trades,
-        'open_positions': open_positions,
-        'pnl_by_ticker': {k: round(v, 2) for k, v in sorted(pnl_by_ticker.items(), key=lambda x: x[1], reverse=True)},
-        'trades_by_ticker': dict(trades_by_ticker),
-        'pnl_by_strategy': {k: round(v, 2) for k, v in pnl_by_strategy.items()},
-        'trades_by_strategy': dict(trades_by_strategy),
-        'monthly_pnl': {k: round(v, 2) for k, v in sorted(monthly_pnl.items())},
-        'monthly_trades': dict(sorted(monthly_trades.items())),
-        'last_updated': datetime.now(timezone.utc).isoformat(),
-    }
-
-# ── Endpoints ──
-
-from fastapi import UploadFile, File
-from fastapi.responses import JSONResponse
+    import json as _json, os as _os
+    data_file = _os.path.expanduser("~/dev/stock-platform/.options_trades.json")
+    if not _os.path.exists(data_file):
+        return {}
+    with open(data_file) as f:
+        return _json.load(f).get("summary", {})
 
 @app.post("/options-journal/upload")
-async def upload_options_csv(file: UploadFile = File(...)):
-    """Upload a Fidelity CSV and merge with existing data"""
-    content = await file.read()
-    csv_text = content.decode('utf-8-sig')
-    new_trades = parse_fidelity_csv(csv_text)
-    if not new_trades:
-        return JSONResponse(status_code=400, content={"error": "No options trades found in CSV"})
+async def upload_options_journal(file: "UploadFile" = fastapi.File(...)):
+    """Parse a Fidelity CSV and save results."""
+    import csv as _csv, io as _io, json as _json, os as _os
+    from collections import defaultdict as _dd
+    from datetime import datetime as _dt, date as _date
 
-    # Load existing raw trades if available
-    raw_path = _OPTIONS_DATA_PATH.parent / "options_raw_trades.json"
-    existing_raw = []
-    if raw_path.exists():
-        with open(raw_path) as f:
-            existing_raw = json.load(f)
+    raw = (await file.read()).decode("utf-8-sig")
+    lines = raw.split("\n")
+    header_idx = next((i for i, l in enumerate(lines) if "Run Date" in l), None)
+    if header_idx is None:
+        raise HTTPException(status_code=400, detail="Could not find Run Date header in CSV")
 
-    # Deduplicate by creating a key for each trade
-    def trade_key(t):
-        return f"{t['date']}-{t['symbol']}-{t['amount']}-{t['trade_type']}"
-    existing_keys = {trade_key(t) for t in existing_raw}
-    added = 0
-    for t in new_trades:
-        k = trade_key(t)
-        if k not in existing_keys:
-            existing_raw.append(t)
-            existing_keys.add(k)
-            added += 1
+    reader = _csv.DictReader(_io.StringIO("\n".join(lines[header_idx:])))
+    rows = [r for r in reader if r.get("Run Date", "").strip()]
+    opt_rows = [r for r in rows if "TRANSACTION" in (r.get("Action") or "")
+                or ("EXPIRED" in (r.get("Action") or "") and (r.get("Symbol") or "").strip().startswith("-"))
+                or ("ASSIGNED" in (r.get("Action") or "") and (r.get("Symbol") or "").strip().startswith("-"))]
 
-    # Save raw trades
-    with open(raw_path, 'w') as f:
-        json.dump(existing_raw, f, indent=2)
+    def clean(r):
+        action = r["Action"]
+        is_expired = "EXPIRED" in action
+        is_assigned = "ASSIGNED" in action
+        return {
+            "date": r["Run Date"], "symbol": r["Symbol"].strip(),
+            "desc": r.get("Description", ""), "account": r["Account"],
+            "qty": abs(float(r.get("Quantity") or 0)),
+            "price": float(r.get("Price ($)") or 0),
+            "amount": float(r.get("Amount ($)") or 0),
+            "is_open": "OPENING" in action,
+            "is_close": "CLOSING" in action or is_expired or is_assigned,
+            "short_leg": "SOLD" in action and "OPENING" in action,
+            "long_leg": "BOUGHT" in action and "OPENING" in action,
+            "is_expired": is_expired, "is_assigned": is_assigned,
+        }
 
-    # Rebuild journal
-    journal = build_journal_data(existing_raw)
-    with open(_OPTIONS_DATA_PATH, 'w') as f:
-        json.dump(journal, f, indent=2)
+    def decode_symbol(sym):
+        s = sym.lstrip("-")
+        try:
+            for i in range(len(s)-1, -1, -1):
+                if s[i] in ("C","P"):
+                    cp = s[i]; strike = float(s[i+1:])
+                    date_str = s[i-6:i]; ticker = s[:i-6]
+                    exp = _dt.strptime(date_str, "%y%m%d").date()
+                    return {"ticker": ticker, "expiration": exp.strftime("%b %d, %Y"),
+                            "call_put": "Call" if cp=="C" else "Put",
+                            "strike": strike, "expired": exp < _date.today()}
+        except: pass
+        return {"ticker": sym, "expiration": "N/A", "call_put": "?", "strike": 0, "expired": False}
 
-    return {"message": f"Imported {added} new trades ({len(new_trades)} in file, {len(existing_raw)} total)", "summary": journal['summary']}
+    trades = [clean(r) for r in opt_rows]
+    by_sym = _dd(lambda: {"openings": [], "closings": []})
+    for t in trades:
+        if t["is_open"]: by_sym[t["symbol"]]["openings"].append(t)
+        elif t["is_close"]: by_sym[t["symbol"]]["closings"].append(t)
+
+    open_positions, closed_trades, orphan_closings = [], [], []
+
+    for sym, legs in by_sym.items():
+        info = decode_symbol(sym)
+        openings, closings = legs["openings"], legs["closings"]
+        total_open_qty = sum(t["qty"] for t in openings)
+        total_close_qty = sum(t["qty"] for t in closings)
+        net_open_qty = total_open_qty - total_close_qty
+        open_cash = sum(t["amount"] for t in openings)
+        close_cash = sum(t["amount"] for t in closings)
+        net_pnl = round(open_cash + close_cash, 2)
+        is_short = any(t["short_leg"] for t in openings)
+        strategy = ("Covered Call" if info["call_put"]=="Call" else "Cash-Secured Put") if is_short else f"Long {info['call_put']}"
+
+        if not openings:
+            orphan_closings.append({"symbol": sym, "ticker": info["ticker"],
+                "close_cash": round(close_cash, 2),
+                "close_date": closings[0]["date"] if closings else "?",
+                "account": closings[0]["account"] if closings else "?"})
+            continue
+
+        if net_open_qty > 0.001:
+            avg_price = sum(t["price"]*t["qty"] for t in openings)/total_open_qty if total_open_qty else 0
+            key = "premium_received" if is_short else "cost_basis"
+            pos = {"symbol": sym, "ticker": info["ticker"], "strike": info["strike"],
+                   "expiration": info["expiration"], "call_put": info["call_put"],
+                   "strategy": strategy, "contracts": int(net_open_qty),
+                   "avg_price": round(avg_price, 2),
+                   "open_date": openings[-1]["date"], "account": openings[0]["account"],
+                   "is_short": is_short, "expired": info["expired"]}
+            pos[key] = round(abs(open_cash), 2)
+            open_positions.append(pos)
+        else:
+            close_date = closings[0]["date"] if closings else "?"
+            key = "open_credit" if is_short else "open_debit"
+            trade = {"symbol": sym, "ticker": info["ticker"], "strike": info["strike"],
+                     "expiration": info["expiration"], "call_put": info["call_put"],
+                     "strategy": strategy, "contracts": int(total_open_qty),
+                     "pnl": net_pnl,
+                     "pnl_pct": round((net_pnl/abs(open_cash))*100, 1) if open_cash else 0,
+                     "open_date": openings[-1]["date"], "close_date": close_date,
+                     "account": openings[0]["account"], "is_short": is_short}
+            trade[key] = round(abs(open_cash), 2)
+            closed_trades.append(trade)
+
+    open_positions.sort(key=lambda x: x["open_date"], reverse=True)
+    closed_trades.sort(key=lambda x: x["close_date"], reverse=True)
+    winners = [t for t in closed_trades if t["pnl"] > 0]
+    losers  = [t for t in closed_trades if t["pnl"] < 0]
+    summary = {
+        "total_pnl": round(sum(t["pnl"] for t in closed_trades), 2),
+        "total_trades": len(closed_trades), "open_count": len(open_positions),
+        "win_rate": round(len(winners)/len(closed_trades)*100, 1) if closed_trades else 0,
+        "winners": len(winners), "losers": len(losers),
+        "avg_win": round(sum(t["pnl"] for t in winners)/len(winners), 2) if winners else 0,
+        "avg_loss": round(sum(t["pnl"] for t in losers)/len(losers), 2) if losers else 0,
+    }
+    pnl_by_ticker = {}
+    for t in closed_trades:
+        pnl_by_ticker[t["ticker"]] = round(pnl_by_ticker.get(t["ticker"], 0) + t["pnl"], 2)
+    result = {"open_positions": open_positions, "closed_trades": closed_trades,
+              "orphan_closings": orphan_closings, "summary": summary,
+              "pnl_by_ticker": pnl_by_ticker}
+
+    data_file = _os.path.expanduser("~/dev/stock-platform/.options_trades.json")
+    with open(data_file, "w") as f:
+        _json.dump(result, f, indent=2)
+
+    return {"status": "ok", "summary": summary}
 
 @app.get("/options-journal/analyze")
-async def analyze_options_trading():
-    """AI-style analysis of trading patterns"""
-    if not _OPTIONS_DATA_PATH.exists():
-        return {"error": "No data"}
-    with open(_OPTIONS_DATA_PATH) as f:
-        data = json.load(f)
-
-    trades = data['completed_trades']
-    s = data['summary']
-    pbt = data['pnl_by_ticker']
-    pbs = data['pnl_by_strategy']
-
-    insights = []
-    warnings = []
-    recommendations = []
-
-    # Win rate analysis
-    if s['win_rate'] >= 65:
-        insights.append({"type": "strength", "title": "Strong Win Rate", "text": f"Your {s['win_rate']}% win rate across {s['total_trades']} trades is excellent. You're picking winners consistently."})
-    elif s['win_rate'] >= 50:
-        insights.append({"type": "neutral", "title": "Decent Win Rate", "text": f"Your {s['win_rate']}% win rate is above average but has room for improvement."})
-    else:
-        warnings.append({"type": "warning", "title": "Low Win Rate", "text": f"Your {s['win_rate']}% win rate needs attention. Consider tightening entry criteria."})
-
-    # Risk/reward
-    if s['avg_win'] and s['avg_loss']:
-        rr = abs(s['avg_win'] / s['avg_loss'])
-        if rr < 1:
-            warnings.append({"type": "warning", "title": "Negative Risk/Reward", "text": f"Avg win (${s['avg_win']:.0f}) is smaller than avg loss (${abs(s['avg_loss']):.0f}). R:R = {rr:.2f}. Your losers are larger than your winners."})
-            recommendations.append({"title": "Cut Losses Faster", "text": "Set stop-losses at 50% of premium paid on long calls. Your avg loss is too large relative to avg win."})
-        else:
-            insights.append({"type": "strength", "title": "Positive Risk/Reward", "text": f"Your R:R of {rr:.2f} means your winners outpace your losers."})
-
-    # Strategy analysis
-    cc_pnl = pbs.get('Covered Call', 0)
-    lc_pnl = pbs.get('Long Call', 0)
-    if cc_pnl > 0 and lc_pnl < 0:
-        insights.append({"type": "strength", "title": "Covered Calls Are Your Edge", "text": f"Covered calls: +${cc_pnl:.0f}. Long calls: ${lc_pnl:.0f}. Your income strategy is working. Speculative calls are dragging P&L."})
-        recommendations.append({"title": "Reduce Long Call Size", "text": "Limit long call positions to 20-30% of options capital. Your covered call income is being eaten by speculative losses."})
-
-    # Best/worst ticker analysis
-    sorted_tickers = sorted(pbt.items(), key=lambda x: x[1], reverse=True)
-    if sorted_tickers:
-        best = sorted_tickers[0]
-        worst = sorted_tickers[-1]
-        insights.append({"type": "strength", "title": f"{best[0]} Is Your Best Ticker", "text": f"${best[1]:.0f} profit from {data['trades_by_ticker'].get(best[0], 0)} trades. You clearly know this stock well — keep the edge."})
-        if worst[1] < -200:
-            warnings.append({"type": "warning", "title": f"{worst[0]} Is Your Worst Ticker", "text": f"${worst[1]:.0f} loss from {data['trades_by_ticker'].get(worst[0], 0)} trades. Consider avoiding or reducing position sizes."})
-
-    # Holding period analysis
+async def analyze_options_journal():
+    import json as _json, os as _os
+    from datetime import datetime as _dt
+    data_file = _os.path.expanduser("~/dev/stock-platform/.options_trades.json")
+    if not _os.path.exists(data_file):
+        return {"insights": [], "warnings": [], "recommendations": [], "stats": {}}
+    with open(data_file) as f:
+        data = _json.load(f)
+    s = data.get("summary", {})
+    trades = data.get("closed_trades", [])
+    if not trades:
+        return {"insights": [], "warnings": [], "recommendations": [], "stats": {}}
+    # Compute stats
+    winners = [t for t in trades if t.get("pnl", 0) > 0]
+    losers = [t for t in trades if t.get("pnl", 0) < 0]
+    avg_win = sum(t["pnl"] for t in winners) / len(winners) if winners else 0
+    avg_loss = abs(sum(t["pnl"] for t in losers) / len(losers)) if losers else 0
+    risk_reward = round(avg_win / avg_loss, 2) if avg_loss > 0 else 0
+    total_wins = sum(t["pnl"] for t in winners)
+    total_losses = abs(sum(t["pnl"] for t in losers))
+    profit_factor = round(total_wins / total_losses, 2) if total_losses > 0 else 0
+    # Avg hold days
+    def _parse_date(s):
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return _dt.strptime(s[:10], fmt)
+            except Exception:
+                continue
+        return None
     hold_days = []
     for t in trades:
-        if t['open_date'] and t['close_date']:
+        od = _parse_date(t.get("open_date", ""))
+        cd = _parse_date(t.get("close_date", ""))
+        if od and cd:
+            hold_days.append((cd - od).days)
+    avg_hold = round(sum(hold_days) / len(hold_days)) if hold_days else 0
+    # Monthly stats
+    monthly = {}
+    for t in trades:
+        cd = t.get("close_date") or ""
+        try:
+            d = _dt.strptime(cd, "%m/%d/%Y")
+            m = d.strftime("%Y-%m")
+        except Exception:
             try:
-                od = datetime.strptime(t['open_date'], '%m/%d/%Y')
-                cd = datetime.strptime(t['close_date'], '%m/%d/%Y')
-                hold_days.append((cd - od).days)
-            except:
-                pass
-    if hold_days:
-        avg_hold = sum(hold_days) / len(hold_days)
-        short_wins = [t for t, d in zip(trades, hold_days) if d <= 3 and t['net_pnl'] > 0]
-        long_losses = [t for t, d in zip(trades, hold_days) if d > 14 and t['net_pnl'] < 0]
-        insights.append({"type": "neutral", "title": "Avg Hold Period", "text": f"Average holding period: {avg_hold:.0f} days. {len(short_wins)} quick wins (0-3 days), {len(long_losses)} extended losses (14+ days)."})
-        if long_losses:
-            recommendations.append({"title": "Time-Based Stops", "text": f"You have {len(long_losses)} trades held 14+ days that ended in losses. Consider closing any position down >30% after 10 days."})
-
-    # Monthly consistency
-    monthly = data['monthly_pnl']
+                d = _dt.strptime(cd[:10], "%Y-%m-%d")
+                m = d.strftime("%Y-%m")
+            except Exception:
+                continue
+        monthly[m] = monthly.get(m, 0) + t.get("pnl", 0)
     green_months = sum(1 for v in monthly.values() if v > 0)
     total_months = len(monthly)
-    if total_months > 0:
-        insights.append({"type": "strength" if green_months == total_months else "neutral", "title": "Monthly Consistency", "text": f"{green_months}/{total_months} profitable months. {'Perfect streak!' if green_months == total_months else 'Stay consistent.'}"})
-
-    # Overtrading check
-    if s['total_trades'] > 0 and total_months > 0:
-        trades_per_month = s['total_trades'] / total_months
-        if trades_per_month > 15:
-            warnings.append({"type": "warning", "title": "High Trade Frequency", "text": f"Averaging {trades_per_month:.0f} trades/month. Higher frequency increases commission drag (${s['total_commissions']:.0f} total). Focus on highest-conviction setups."})
-
-    # Account comparison
-    roth_trades = [t for t in trades if t['account'] == 'ROTH IRA']
-    ind_trades = [t for t in trades if t['account'] == 'Individual']
-    if roth_trades and ind_trades:
-        roth_pnl = sum(t['net_pnl'] for t in roth_trades)
-        ind_pnl = sum(t['net_pnl'] for t in ind_trades)
-        insights.append({"type": "neutral", "title": "Account Comparison", "text": f"Roth IRA: ${roth_pnl:.0f} ({len(roth_trades)} trades). Individual: ${ind_pnl:.0f} ({len(ind_trades)} trades). {'Roth is outperforming!' if roth_pnl/max(len(roth_trades),1) > ind_pnl/max(len(ind_trades),1) else 'Individual has better per-trade returns.'}"})
-
-    # Open position risk
-    if data['open_positions']:
-        total_at_risk = sum(abs(p['open_premium']) for p in data['open_positions'])
-        recommendations.append({"title": "Open Position Check", "text": f"You have {len(data['open_positions'])} open positions with ${total_at_risk:.0f} at risk. Set price targets and stop-losses for each."})
-
+    trades_per_month = round(len(trades) / total_months, 1) if total_months > 0 else 0
+    # Ticker concentration
+    ticker_counts = {}
+    for t in trades:
+        tk = t.get("ticker", "")
+        ticker_counts[tk] = ticker_counts.get(tk, 0) + 1
+    top_ticker = max(ticker_counts, key=ticker_counts.get) if ticker_counts else ""
+    top_ticker_pct = round(ticker_counts.get(top_ticker, 0) / len(trades) * 100) if trades else 0
+    # Strategy concentration
+    strat_counts = {}
+    for t in trades:
+        st = t.get("strategy", "")
+        strat_counts[st] = strat_counts.get(st, 0) + 1
+    top_strat = max(strat_counts, key=strat_counts.get) if strat_counts else ""
+    top_strat_pct = round(strat_counts.get(top_strat, 0) / len(trades) * 100) if trades else 0
+    # Win/loss streaks
+    sorted_trades = sorted(trades, key=lambda t: t.get("close_date", ""))
+    max_win_streak = max_loss_streak = cur_win = cur_loss = 0
+    for t in sorted_trades:
+        if t.get("pnl", 0) >= 0:
+            cur_win += 1; cur_loss = 0; max_win_streak = max(max_win_streak, cur_win)
+        else:
+            cur_loss += 1; cur_win = 0; max_loss_streak = max(max_loss_streak, cur_loss)
+    # Build insights
+    insights = []
+    win_rate = s.get("win_rate", 0)
+    if win_rate >= 70:
+        insights.append({"type": "strength", "title": f"Exceptional Win Rate: {win_rate}%", "text": f"You win {win_rate}% of your trades ({len(winners)}W/{len(losers)}L). This is well above average for options trading."})
+    elif win_rate >= 55:
+        insights.append({"type": "strength", "title": f"Solid Win Rate: {win_rate}%", "text": f"Winning {win_rate}% of trades shows consistent execution."})
+    if profit_factor >= 2:
+        insights.append({"type": "strength", "title": f"Strong Profit Factor: {profit_factor}x", "text": f"Your winners generate ${total_wins:.0f} vs ${total_losses:.0f} in losses. A profit factor above 2 indicates a strong edge."})
+    elif profit_factor >= 1.5:
+        insights.append({"type": "strength", "title": f"Positive Profit Factor: {profit_factor}x", "text": f"Total wins of ${total_wins:.0f} vs losses of ${total_losses:.0f}."})
+    if risk_reward >= 1.5:
+        insights.append({"type": "strength", "title": f"Good Risk/Reward: {risk_reward}x", "text": f"Average win (${avg_win:.2f}) is {risk_reward}x your average loss (${avg_loss:.2f})."})
+    if max_win_streak >= 5:
+        insights.append({"type": "neutral", "title": f"Best Win Streak: {max_win_streak}", "text": f"Your longest winning streak was {max_win_streak} consecutive profitable trades."})
+    if green_months == total_months and total_months >= 2:
+        insights.append({"type": "strength", "title": "All Green Months", "text": f"Every month of trading ({total_months} months) has been profitable. Excellent consistency."})
+    elif green_months > 0:
+        insights.append({"type": "neutral", "title": f"Monthly Consistency: {green_months}/{total_months}", "text": f"{green_months} out of {total_months} months were profitable."})
+    # Warnings
+    warnings = []
+    if max_loss_streak >= 4:
+        warnings.append({"type": "warning", "title": f"Loss Streak Alert: {max_loss_streak}", "text": f"Your worst loss streak was {max_loss_streak} consecutive losing trades. Consider position sizing rules."})
+    if top_ticker_pct >= 40:
+        warnings.append({"type": "warning", "title": f"Ticker Concentration: {top_ticker} ({top_ticker_pct}%)", "text": f"{top_ticker_pct}% of your trades are in {top_ticker}. Diversifying across more tickers can reduce risk."})
+    if risk_reward < 1 and len(trades) > 5:
+        warnings.append({"type": "warning", "title": f"Low Risk/Reward: {risk_reward}x", "text": f"Your average loss (${avg_loss:.2f}) is larger than your average win (${avg_win:.2f}). Consider tighter stop losses."})
+    if avg_hold <= 2 and len(hold_days) > 3:
+        warnings.append({"type": "warning", "title": f"Very Short Holding Period: {avg_hold}d", "text": "Averaging under 2 days may indicate overtrading. Consider giving trades more time."})
+    # Recommendations
+    recommendations = []
+    if top_strat_pct >= 60 and len(strat_counts) < 3:
+        recommendations.append({"title": "Diversify Strategies", "text": f"{top_strat_pct}% of trades use {top_strat}. Exploring other strategies like spreads or covered calls could improve risk-adjusted returns."})
+    if len(trades) >= 10 and profit_factor < 1.5:
+        recommendations.append({"title": "Improve Win Quality", "text": "Focus on letting winners run longer while cutting losers faster to improve your profit factor."})
+    if total_months >= 2 and trades_per_month > 15:
+        recommendations.append({"title": "Consider Trade Frequency", "text": f"At {trades_per_month} trades/month, you may benefit from being more selective and focusing on higher-conviction setups."})
+    if not recommendations:
+        recommendations.append({"title": "Keep It Up", "text": f"Your trading statistics look solid with a {win_rate}% win rate and {profit_factor}x profit factor. Continue tracking and refining your approach."})
     return {
-        "insights": insights,
-        "warnings": warnings,
-        "recommendations": recommendations,
-        "stats": {
-            "risk_reward": round(abs(s['avg_win'] / s['avg_loss']), 2) if s['avg_loss'] else 0,
-            "avg_hold_days": round(sum(hold_days) / len(hold_days), 1) if hold_days else 0,
-            "trades_per_month": round(s['total_trades'] / max(len(monthly), 1), 1),
-            "profit_factor": round(sum(t['net_pnl'] for t in trades if t['net_pnl'] > 0) / abs(sum(t['net_pnl'] for t in trades if t['net_pnl'] < 0)), 2) if sum(t['net_pnl'] for t in trades if t['net_pnl'] < 0) != 0 else 0,
-            "green_months": green_months,
-            "total_months": total_months,
-        }
+        "insights": insights, "warnings": warnings, "recommendations": recommendations,
+        "stats": {"risk_reward": risk_reward, "profit_factor": profit_factor, "avg_hold_days": avg_hold, "trades_per_month": trades_per_month, "green_months": green_months, "total_months": total_months}
     }
 
 @app.get("/options-journal/live")
-async def get_live_positions():
-    """Get current prices for open positions"""
-    if not _OPTIONS_DATA_PATH.exists():
-        return {"error": "No data"}
-    with open(_OPTIONS_DATA_PATH) as f:
-        data = json.load(f)
+async def get_options_journal_live():
+    return await get_options_journal(live=True)
 
-    positions = data.get('open_positions', [])
-    if not positions:
-        return {"positions": [], "total_unrealized": 0}
-
-    # Get current stock prices
-    tickers = list(set(p['ticker'] for p in positions if p['ticker']))
-    prices = {}
-    try:
-        import yfinance as yf
-        for ticker in tickers:
-            try:
-                t = yf.Ticker(ticker)
-                info = t.info
-                prices[ticker] = {
-                    "price": info.get('regularMarketPrice') or info.get('currentPrice') or info.get('previousClose', 0),
-                    "change": info.get('regularMarketChange', 0),
-                    "change_pct": info.get('regularMarketChangePercent', 0),
-                }
-            except:
-                prices[ticker] = {"price": 0, "change": 0, "change_pct": 0}
-    except ImportError:
-        pass
-
-    enriched = []
-    for p in positions:
-        ticker = p['ticker']
-        stock_price = prices.get(ticker, {}).get('price', 0)
-        # Estimate option value (rough intrinsic + some time value)
-        if p['option_type'] == 'CALL':
-            intrinsic = max(0, stock_price - p['strike']) * 100 * p['contracts']
-        else:
-            intrinsic = max(0, p['strike'] - stock_price) * 100 * p['contracts']
-        cost = abs(p['open_premium'])
-        unrealized = intrinsic - cost
-        enriched.append({
-            **p,
-            "stock_price": stock_price,
-            "stock_change": prices.get(ticker, {}).get('change', 0),
-            "stock_change_pct": prices.get(ticker, {}).get('change_pct', 0),
-            "intrinsic_value": round(intrinsic, 2),
-            "cost_basis": round(cost, 2),
-            "unrealized_pnl": round(unrealized, 2),
-            "itm": (stock_price > p['strike'] if p['option_type'] == 'CALL' else stock_price < p['strike']),
-        })
-
-    total_unrealized = sum(p['unrealized_pnl'] for p in enriched)
-    return {"positions": enriched, "total_unrealized": round(total_unrealized, 2), "prices": prices}
-
-# Phase 8 Layer endpoints
-try:
-    from photonics_layers import router as layers_router
-    app.include_router(layers_router)
-    print("OK: Loaded photonics layers (direct)")
-except ImportError:
-    try:
-        from app.photonics_layers import router as layers_router
-        app.include_router(layers_router)
-        print("OK: Loaded photonics layers (app.)")
-    except Exception as e2:
-        print(f"WARN: photonics layers not loaded: {e2}")

@@ -1,9 +1,11 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-const API = "http://localhost:8001/photonics";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const API = `${BASE}/photonics`;
 
-const PHOTONICS_SUBTABS = ["DASHBOARD", "WATCHLIST", "SUPPLY CHAIN", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS", "CATALYSTS", "TECHNICALS", "PORTFOLIO", "RS", "RISK", "NEWS", "ALERTS", "GRAPH","MODELS","SIGNALS","SIMULATE","PIPELINE","CONSTRUCT","EXPORT","RESEARCH","COHR-MODEL","FANG","OSCR","SECTORS"];
+const PHOTONICS_SUBTABS = ["DASHBOARD", "WATCHLIST", "SUPPLY CHAIN", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS", "CATALYSTS", "TECHNICALS", "PORTFOLIO", "RS", "RISK", "NEWS", "ALERTS", "EDUCATION", "GRAPH","MODELS","SIGNALS","SIMULATE","PIPELINE","CONSTRUCT","EXPORT","COHR-MODEL","FANG","OSCR","SECTORS"];
 
 const STEP_NAMES: Record<number, string> = {
   0: "Mining", 1: "Substrate", 2: "Epitaxy", 3: "Wafer Fab",
@@ -13,17 +15,29 @@ const STEP_NAMES: Record<number, string> = {
 const DEFAULT_WATCHLIST_TICKERS = ["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
 
 const S: Record<string, any> = {
-  card: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 16, marginBottom: 12 },
-  input: { background: "#f8f9fb", border: "1px solid #2a3441", borderRadius: 4, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%", outline: "none" },
-  select: { background: "#f8f9fb", border: "1px solid #2a3441", borderRadius: 4, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" },
-  btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
-  btnSecondary: { padding: "8px 16px", background: "#2a3441", color: "#e6edf3", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-  btnDanger: { padding: "6px 12px", background: "#c9362c", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12 },
-  btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
-  label: { color: "#7d8590", fontSize: 11, fontFamily: "'DM Sans', sans-serif", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4, display: "block" },
-  green: "#2ea043", red: "#f85149", yellow: "#d29922", blue: "#58a6ff", cyan: "#39d353", dim: "#484f58", text: "#e6edf3", muted: "#7d8590",
+  card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16, marginBottom: 12 },
+  input: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%", outline: "none" },
+  select: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" },
+  btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
+  btnSecondary: { padding: "8px 16px", background: "#21262d", color: "#e6edf3", border: "1px solid #30363d", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+  btnDanger: { padding: "6px 12px", background: "#c9362c", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12 },
+  btnSmall: { padding: "4px 10px", background: "#21262d", color: "#8b949e", border: "1px solid #30363d", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
+  label: { color: "#8b949e", fontSize: 11, fontFamily: "'DM Sans', sans-serif", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4, display: "block" },
+  green: "#2ea043", red: "#f85149", yellow: "#d29922", blue: "#58a6ff", cyan: "#39d353", dim: "#484f58", text: "#e6edf3", muted: "#8b949e",
   mono: { fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" },
 };
+
+function ChartTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ color: "#8b949e", marginBottom: 4 }}>{label}</div>
+      {payload.map((p: any, i: number) => (
+        <div key={i} style={{ color: p.color || "#e6edf3", fontWeight: "bold" }}>{p.name}: {typeof p.value === "number" ? p.value.toFixed(2) : p.value}</div>
+      ))}
+    </div>
+  );
+}
 
 
 // ===========================================================
@@ -40,7 +54,7 @@ function PremarketBanner() {
   const fetchPremarket = (tickers?: string) => {
     setLoading(true);
     const url = tickers ? `${API}/premarket?tickers=${tickers}` : `${API}/premarket`;
-    fetch(url).then(r => r.json()).then(d => {
+    fetch(url).then(r => { if (!r.ok) throw new Error("endpoint not available"); return r.json(); }).then(d => {
       setData(d);
       setLastRefresh(new Date().toLocaleTimeString());
       setLoading(false);
@@ -132,7 +146,7 @@ function PremarketBanner() {
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
                 <thead>
-                  <tr style={{ borderBottom: "1px solid #e8ecf0" }}>
+                  <tr style={{ borderBottom: "1px solid #30363d" }}>
                     {["Ticker", "Prev Close", "Price", "Chg", "Chg%", "Pre/AH", "Pre/AH%", "Volume", "Vol Ratio", "52w High", "% from 52H"].map(h => (
                       <th key={h} style={{ color: S.dim, fontWeight: "normal", padding: "4px 6px", textAlign: "right", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
@@ -140,7 +154,7 @@ function PremarketBanner() {
                 </thead>
                 <tbody>
                   {data.tickers?.filter((t: any) => t.status === "ok").map((t: any) => (
-                    <tr key={t.ticker} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                    <tr key={t.ticker} style={{ borderBottom: "1px solid #21262d" }}>
                       <td style={{ padding: "6px", color: "#0d9f4f", fontWeight: "bold", textAlign: "left" }}>{t.ticker}</td>
                       <td style={{ padding: "6px", color: S.dim, textAlign: "right" }}>${t.prev_close}</td>
                       <td style={{ padding: "6px", color: S.text, fontWeight: "bold", textAlign: "right" }}>${t.regular_price}</td>
@@ -222,7 +236,7 @@ function PhotonicsGraph() {
               </div>
             ))}
           </div>
-          <div style={{ borderTop: "1px solid #e8ecf0", marginTop: 12, paddingTop: 12 }}>
+          <div style={{ borderTop: "1px solid #30363d", marginTop: 12, paddingTop: 12 }}>
             <div style={{ ...S.label, marginBottom: 8 }}>ADD NODE</div>
             <input style={{ ...S.input, marginBottom: 4 }} placeholder="ID (e.g. BROADCOM)" value={newNode.id} onChange={e => setNewNode({ ...newNode, id: e.target.value, label: e.target.value })} />
             <select style={{ ...S.select, width: "100%", marginBottom: 4 }} value={newNode.group} onChange={e => setNewNode({ ...newNode, group: e.target.value, type: e.target.value === "ticker" ? "company" : e.target.value === "step" ? "supply_chain" : e.target.value })}>
@@ -252,13 +266,13 @@ function PhotonicsGraph() {
                 </div>
               </div>
               {connected.map((e, i) => (
-                <div key={i} style={{ padding: "8px 12px", background: "#f8f9fb", borderRadius: 4, marginBottom: 4, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div key={i} style={{ padding: "8px 12px", background: "#161b22", borderRadius: 4, marginBottom: 4, fontSize: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ color: e.from === selectedNode ? S.green : S.blue }}>{e.from === selectedNode ? e.to : e.from}</span>
                   <span style={{ color: S.dim, fontSize: 10, padding: "2px 6px", background: "#1a1f2e", borderRadius: 3 }}>{e.rel}</span>
                   <span style={{ color: S.muted, fontSize: 10 }}>{e.from === selectedNode ? "→" : "←"}</span>
                 </div>
               ))}
-              <div style={{ borderTop: "1px solid #e8ecf0", marginTop: 12, paddingTop: 12 }}>
+              <div style={{ borderTop: "1px solid #30363d", marginTop: 12, paddingTop: 12 }}>
                 <div style={{ ...S.label, marginBottom: 8 }}>ADD EDGE FROM {selectedNode}</div>
                 <div style={{ display: "flex", gap: 4 }}>
                   <input style={{ ...S.input, flex: 1 }} placeholder="Target node" value={newEdge.to} onChange={e => setNewEdge({ ...newEdge, to: e.target.value })} />
@@ -284,7 +298,7 @@ function PhotonicsGraph() {
         <div style={{ ...S.label, marginBottom: 8 }}>EDGES ({edges.length})</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 4 }}>
           {edges.slice(0, 30).map((e, i) => (
-            <div key={i} style={{ fontSize: 11, padding: "4px 8px", background: "#f8f9fb", borderRadius: 3 }}>
+            <div key={i} style={{ fontSize: 11, padding: "4px 8px", background: "#161b22", borderRadius: 3 }}>
               <span style={{ color: S.green }}>{e.from}</span>
               <span style={{ color: S.dim }}> → </span>
               <span style={{ color: S.blue }}>{e.to}</span>
@@ -332,7 +346,7 @@ function PhotonicsModels() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["monte-carlo", "factor-model", "kelly"].map(t => (
           <button key={t} onClick={() => setModelTab(t)} style={{ padding: "8px 16px", background: modelTab === t ? "#0d1117" : "transparent", color: modelTab === t ? S.green : S.muted, border: "none", borderBottom: modelTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
         ))}
@@ -366,7 +380,7 @@ function PhotonicsModels() {
               <div style={S.card}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
-                    <tr style={{ color: S.muted, borderBottom: "1px solid #e8ecf0" }}>
+                    <tr style={{ color: S.muted, borderBottom: "1px solid #30363d" }}>
                       <th style={{ textAlign: "left", padding: 8 }}>TICKER</th>
                       <th style={{ textAlign: "right", padding: 8 }}>CURRENT</th>
                       <th style={{ textAlign: "right", padding: 8 }}>P5 (WORST)</th>
@@ -379,7 +393,7 @@ function PhotonicsModels() {
                   </thead>
                   <tbody>
                     {mcResults.results?.map((r: any) => (
-                      <tr key={r.ticker} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                      <tr key={r.ticker} style={{ borderBottom: "1px solid #21262d" }}>
                         <td style={{ padding: 8, color: "#0d9f4f", fontWeight: "bold" }}>{r.ticker}</td>
                         <td style={{ padding: 8, textAlign: "right", color: S.text }}>${r.current_price}</td>
                         <td style={{ padding: 8, textAlign: "right", color: S.red }}>${r.p5}</td>
@@ -403,7 +417,7 @@ function PhotonicsModels() {
           <div style={{ ...S.label, marginBottom: 12 }}>PHOTONICS FACTOR MODEL — MULTI-FACTOR DECOMPOSITION</div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr style={{ color: S.muted, borderBottom: "1px solid #e8ecf0" }}>
+              <tr style={{ color: S.muted, borderBottom: "1px solid #30363d" }}>
                 <th style={{ textAlign: "left", padding: 8 }}>TICKER</th>
                 {factorScores.factors?.map((f: string) => (
                   <th key={f} style={{ textAlign: "right", padding: 8, fontSize: 10 }}>{f.replace("_", " ").toUpperCase()}</th>
@@ -413,7 +427,7 @@ function PhotonicsModels() {
             </thead>
             <tbody>
               {factorScores.scores?.map((s: any) => (
-                <tr key={s.ticker} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                <tr key={s.ticker} style={{ borderBottom: "1px solid #21262d" }}>
                   <td style={{ padding: 8, color: "#0d9f4f", fontWeight: "bold" }}>{s.ticker}</td>
                   {factorScores.factors?.map((f: string) => (
                     <td key={f} style={{ padding: 8, textAlign: "right", color: s[f] > 0 ? S.green : s[f] < 0 ? S.red : S.dim }}>{s[f] > 0 ? "+" : ""}{s[f]}</td>
@@ -432,7 +446,7 @@ function PhotonicsModels() {
           <div style={{ color: S.muted, fontSize: 12, marginBottom: 16 }}>Using Quarter-Kelly (0.25x) for conservative sizing. Adjust win probability and payoff ratio per thesis conviction.</div>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr style={{ color: S.muted, borderBottom: "1px solid #e8ecf0" }}>
+              <tr style={{ color: S.muted, borderBottom: "1px solid #30363d" }}>
                 <th style={{ textAlign: "left", padding: 8 }}>TICKER</th>
                 <th style={{ textAlign: "right", padding: 8 }}>WIN PROB</th>
                 <th style={{ textAlign: "right", padding: 8 }}>W/L RATIO</th>
@@ -447,7 +461,7 @@ function PhotonicsModels() {
                 const ak = kp * 0.25;
                 const ds = 100000 * Math.max(ak, 0);
                 return (
-                  <tr key={r.t} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                  <tr key={r.t} style={{ borderBottom: "1px solid #21262d" }}>
                     <td style={{ padding: 8, color: "#0d9f4f", fontWeight: "bold" }}>{r.t}</td>
                     <td style={{ padding: 8, textAlign: "right" }}>{(r.wp * 100).toFixed(0)}%</td>
                     <td style={{ padding: 8, textAlign: "right" }}>{r.wl}:1</td>
@@ -494,7 +508,7 @@ function PhotonicsSignals() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["anomalies", "options-flow", "social-velocity"].map(t => (
           <button key={t} onClick={() => setSignalTab(t)} style={{ padding: "8px 16px", background: signalTab === t ? "#0d1117" : "transparent", color: signalTab === t ? S.green : S.muted, border: "none", borderBottom: signalTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
         ))}
@@ -519,7 +533,7 @@ function PhotonicsSignals() {
         <div style={S.card}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr style={{ color: S.muted, borderBottom: "1px solid #e8ecf0" }}>
+              <tr style={{ color: S.muted, borderBottom: "1px solid #30363d" }}>
                 <th style={{ textAlign: "left", padding: 8 }}>TICKER</th>
                 <th style={{ textAlign: "center", padding: 8 }}>TYPE</th>
                 <th style={{ textAlign: "right", padding: 8 }}>STRIKE</th>
@@ -532,7 +546,7 @@ function PhotonicsSignals() {
             </thead>
             <tbody>
               {flow.map((f, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #f0f2f5" }}>
+                <tr key={i} style={{ borderBottom: "1px solid #21262d" }}>
                   <td style={{ padding: 8, color: "#0d9f4f", fontWeight: "bold" }}>{f.ticker}</td>
                   <td style={{ padding: 8, textAlign: "center", color: f.type === "CALL" ? S.green : S.red, fontWeight: "bold" }}>{f.type}</td>
                   <td style={{ padding: 8, textAlign: "right" }}>${f.strike}</td>
@@ -644,7 +658,7 @@ function PhotonicsSimulate() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["what-if", "war-game", "stress-test", "history"].map(t => (
           <button key={t} onClick={() => setSimTab(t)} style={{ padding: "8px 16px", background: simTab === t ? "#0d1117" : "transparent", color: simTab === t ? S.green : S.muted, border: "none", borderBottom: simTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" as const }}>{t.replace("-", " ")}</button>
         ))}
@@ -711,7 +725,7 @@ function PhotonicsSimulate() {
               { move: "TSMC enters photonics foundry market with dedicated node", attacker: "TSM" },
               { move: "Lumentum launches breakthrough CPO module, takes 30% of market", attacker: "LITE" },
             ].map((w, i) => (
-              <div key={i} onClick={() => { setWargameMove(w.move); setWargameAttacker(w.attacker); }} style={{ padding: "8px 12px", background: "#f8f9fb", borderRadius: 4, marginBottom: 4, cursor: "pointer", fontSize: 12, borderLeft: "3px solid #d97706" }}>
+              <div key={i} onClick={() => { setWargameMove(w.move); setWargameAttacker(w.attacker); }} style={{ padding: "8px 12px", background: "#161b22", borderRadius: 4, marginBottom: 4, cursor: "pointer", fontSize: 12, borderLeft: "3px solid #d97706" }}>
                 <span style={{ color: S.red, fontWeight: "bold" }}>{w.attacker}</span>
                 <span style={{ color: S.dim }}>{" \u2192 "}</span>
                 <span style={{ color: S.text }}>{w.move}</span>
@@ -749,7 +763,7 @@ function PhotonicsSimulate() {
               </div>
               <div style={S.card}>
                 {stressResults.results?.map((r: any) => (
-                  <div key={r.ticker} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #f0f2f5" }}>
+                  <div key={r.ticker} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #21262d" }}>
                     <span style={{ color: "#0d9f4f", fontWeight: "bold", width: 60 }}>{r.ticker}</span>
                     <span style={{ color: S.text }}>${r.current_value.toLocaleString()}</span>
                     <span style={{ color: S.dim }}>\u2192</span>
@@ -862,7 +876,7 @@ function PhotonicsConstruct() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["risk-parity", "rebalance", "tax-harvest", "drawdown"].map(t => (
           <button key={t} onClick={() => setConstructTab(t)} style={{ padding: "8px 16px", background: constructTab === t ? "#0d1117" : "transparent", color: constructTab === t ? S.green : S.muted, border: "none", borderBottom: constructTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
         ))}
@@ -873,7 +887,7 @@ function PhotonicsConstruct() {
           <div style={{ ...S.card }}>
             <div style={{ ...S.label, marginBottom: 12 }}>RISK PARITY ALLOCATION — EQUAL RISK PER SUPPLY CHAIN STEP</div>
             {riskParity.allocations?.map((a: any) => (
-              <div key={a.step} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid #f0f2f5" }}>
+              <div key={a.step} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid #21262d" }}>
                 <span style={{ color: S.blue, fontWeight: "bold", width: 100, fontSize: 13 }}>{a.step}</span>
                 <div style={{ flex: 1, height: 8, background: "#1a1f2e", borderRadius: 4, overflow: "hidden" }}>
                   <div style={{ height: "100%", width: `${a.step_weight}%`, background: S.green, borderRadius: 4 }} />
@@ -897,7 +911,7 @@ function PhotonicsConstruct() {
             { step: "Wafer Fab", target: 20, actual: 18, action: "ADD", names: "CRDO pullback — add $1,000" },
             { step: "Assembly", target: 15, actual: 14, action: "HOLD", names: "Within tolerance band" },
           ].map((r, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #f0f2f5" }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #21262d" }}>
               <span style={{ fontWeight: "bold", width: 100, color: S.blue }}>{r.step}</span>
               <span style={{ color: S.muted, width: 80 }}>Target: {r.target}%</span>
               <span style={{ color: r.actual > r.target + 3 ? S.red : r.actual < r.target - 3 ? S.yellow : S.green, width: 80, fontWeight: "bold" }}>Actual: {r.actual}%</span>
@@ -916,7 +930,7 @@ function PhotonicsConstruct() {
             { ticker: "ALMU", basis: 12.00, current: 9.80, loss: -1100, swap: "AXTI", washSafe: true },
             { ticker: "LWLG", basis: 4.20, current: 3.10, loss: -550, swap: "POET", washSafe: false },
           ].map((t, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #f0f2f5" }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #21262d" }}>
               <span style={{ color: "#0d9f4f", fontWeight: "bold", width: 60 }}>{t.ticker}</span>
               <span style={{ color: S.muted, width: 80 }}>Basis: ${t.basis}</span>
               <span style={{ color: S.red, width: 80 }}>Now: ${t.current}</span>
@@ -939,7 +953,7 @@ function PhotonicsConstruct() {
             { ticker: "CRDO", maxDD: -35, currentDD: 0, avgRecovery: "4.0 months", status: "recovered" },
             { ticker: "ANET", maxDD: -18, currentDD: -3, avgRecovery: "1.8 months", status: "recovered" },
           ].map((d, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #f0f2f5" }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: "1px solid #21262d" }}>
               <span style={{ color: "#0d9f4f", fontWeight: "bold", width: 60 }}>{d.ticker}</span>
               <span style={{ color: S.red, width: 80 }}>Max: {d.maxDD}%</span>
               <span style={{ color: d.currentDD < -20 ? S.red : d.currentDD < -10 ? S.yellow : S.green, width: 80 }}>Now: {d.currentDD}%</span>
@@ -993,12 +1007,12 @@ function CohrModelView() {
                   {est.growth && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}><span style={{ color: S.dim }}>Growth</span><span style={{ color: "#0d9f4f", fontWeight: "bold" }}>{est.growth}%</span></div>}
                   {est.gross_margin && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}><span style={{ color: S.dim }}>Gross Margin</span><span style={{ color: S.text }}>{est.gross_margin}%</span></div>}
                   {est.net_margin && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}><span style={{ color: S.dim }}>Net Margin</span><span style={{ color: S.text }}>{est.net_margin}%</span></div>}
-                  {est.eps && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderTop: "1px solid #e8ecf0" }}><span style={{ color: S.dim }}>EPS</span><span style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 18 }}>${est.eps}</span></div>}
+                  {est.eps && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderTop: "1px solid #30363d" }}><span style={{ color: S.dim }}>EPS</span><span style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 18 }}>${est.eps}</span></div>}
                   {est.fcf && <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}><span style={{ color: S.dim }}>FCF</span><span style={{ color: S.text, fontWeight: "bold" }}>${(est.fcf/1000).toFixed(1)}B</span></div>}
                 </div>
               ) : <div style={{ color: S.muted, fontSize: 11 }}>No {selectedYear} estimate</div>}
               {m?.price_targets?.[selectedYear] && (
-                <div style={{ marginTop: 8, borderTop: "1px solid #e8ecf0", paddingTop: 8 }}>
+                <div style={{ marginTop: 8, borderTop: "1px solid #30363d", paddingTop: 8 }}>
                   <div style={{ ...S.label, fontSize: 10 }}>PRICE TARGETS</div>
                   {Object.entries(m.price_targets[selectedYear]).map(([k, v]) => (
                     <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
@@ -1009,10 +1023,10 @@ function CohrModelView() {
                 </div>
               )}
               {m?.key_assumptions && (
-                <div style={{ marginTop: 8, borderTop: "1px solid #e8ecf0", paddingTop: 8 }}>
+                <div style={{ marginTop: 8, borderTop: "1px solid #30363d", paddingTop: 8 }}>
                   <div style={{ ...S.label, fontSize: 10, marginBottom: 4 }}>KEY ASSUMPTIONS</div>
                   {m.key_assumptions.map((a: string, i: number) => (
-                    <div key={i} style={{ color: S.dim, fontSize: 10, padding: "2px 0", paddingLeft: 8, borderLeft: "2px solid #e8ecf0" }}>{a}</div>
+                    <div key={i} style={{ color: S.dim, fontSize: 10, padding: "2px 0", paddingLeft: 8, borderLeft: "2px solid #30363d" }}>{a}</div>
                   ))}
                 </div>
               )}
@@ -1070,14 +1084,14 @@ function FangOilModel() {
       <div style={S.card}>
         <div style={{ ...S.label, color: S.red, marginBottom: 12 }}>OPTIONS POSITIONS — IRAN ESCALATION BET</div>
         {model.options_positions?.map((opt: any, i: number) => (
-          <div key={i} style={{ padding: 12, background: "#f8f9fb", borderRadius: 6, marginBottom: 8, borderLeft: "3px solid #dc2626" }}>
+          <div key={i} style={{ padding: 12, background: "#161b22", borderRadius: 6, marginBottom: 8, borderLeft: "3px solid #dc2626" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 14 }}>FANG ${opt.strike}C {opt.expiry}</span>
               <span style={{ color: S.dim }}>Cost: ${opt.cost_range}</span>
             </div>
             <div style={{ display: "flex", gap: 16 }}>
               {Object.entries(opt.scenarios || {}).map(([wti, data]: [string, any]) => (
-                <div key={wti} style={{ flex: 1, padding: 8, background: "#ffffff", borderRadius: 4 }}>
+                <div key={wti} style={{ flex: 1, padding: 8, background: "#161b22", borderRadius: 4 }}>
                   <div style={{ color: S.yellow, fontSize: 11 }}>WTI ${wti}</div>
                   <div style={{ color: S.text, fontSize: 12 }}>FANG ~${data.fang_price_est}</div>
                   <div style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 14 }}>{data.return_pct}</div>
@@ -1091,7 +1105,7 @@ function FangOilModel() {
       <div style={S.card}>
         <div style={{ ...S.label, marginBottom: 8 }}>CATALYST TIMELINE</div>
         {model.catalysts?.map((c: any, i: number) => (
-          <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #f0f2f5", fontSize: 12 }}>
+          <div key={i} style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #21262d", fontSize: 12 }}>
             <span style={{ color: S.red, fontWeight: "bold", width: 100 }}>{c.probability}</span>
             <span style={{ color: S.text, flex: 1 }}>{c.event}</span>
             <span style={{ color: S.dim }}>{c.timeline}</span>
@@ -1289,7 +1303,7 @@ function CryptoLive() {
       <div style={S.card}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'DM Sans', sans-serif" }}>
           <thead>
-            <tr style={{ borderBottom: "2px solid #e8ecf0" }}>
+            <tr style={{ borderBottom: "2px solid #30363d" }}>
               {["#", "Coin", "Price", "24h %", "24h High", "24h Low", "Volume", "Market Cap", "52w High", "From ATH"].map(h => (
                 <th key={h} style={{ color: S.dim, fontWeight: "normal", padding: "8px 6px", textAlign: h === "Coin" ? "left" : "right", fontSize: 10 }}>{h}</th>
               ))}
@@ -1297,7 +1311,7 @@ function CryptoLive() {
           </thead>
           <tbody>
             {data?.coins?.filter((c: any) => c.status === "ok").map((c: any, i: number) => (
-              <tr key={c.symbol} onClick={() => setSelectedCoin(selectedCoin?.symbol === c.symbol ? null : c)} style={{ borderBottom: "1px solid #f0f2f5", cursor: "pointer", background: selectedCoin?.symbol === c.symbol ? "#0d1a14" : "transparent" }}>
+              <tr key={c.symbol} onClick={() => setSelectedCoin(selectedCoin?.symbol === c.symbol ? null : c)} style={{ borderBottom: "1px solid #21262d", cursor: "pointer", background: selectedCoin?.symbol === c.symbol ? "#0d1a14" : "transparent" }}>
                 <td style={{ padding: "8px 6px", color: S.dim, textAlign: "right" }}>{i + 1}</td>
                 <td style={{ padding: "8px 6px", textAlign: "left" }}>
                   <span style={{ color: "#f7931a", fontWeight: "bold", fontSize: 13 }}>{c.symbol}</span>
@@ -1356,7 +1370,7 @@ function SectorsView() {
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["photonics", "healthcare", "semis", "energy"].map(s => (
           <button key={s} onClick={() => setActiveSector(s)} style={{ padding: "8px 16px", background: activeSector === s ? "#0d1117" : "transparent", color: activeSector === s ? (sectorColors[s] || S.green) : S.muted, border: "none", borderBottom: activeSector === s ? "2px solid " + (sectorColors[s] || S.green) : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" as const }}>{s}</button>
         ))}
@@ -1369,7 +1383,7 @@ function SectorsView() {
             <div style={{ color: S.dim, fontSize: 11, marginBottom: 12 }}>Key metric: {sec.key_metric}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {sec.tickers?.map((t: string) => (
-                <div key={t} style={{ padding: "8px 16px", background: "#f8f9fb", borderRadius: 4, border: "1px solid #e8ecf0", cursor: "pointer" }}>
+                <div key={t} style={{ padding: "8px 16px", background: "#161b22", borderRadius: 4, border: "1px solid #30363d", cursor: "pointer" }}>
                   <span style={{ color: sectorColors[activeSector], fontWeight: "bold", fontSize: 14 }}>{t}</span>
                 </div>
               ))}
@@ -1381,8 +1395,8 @@ function SectorsView() {
             <div style={{ color: S.dim, fontSize: 12, marginBottom: 8 }}>Upload your Fidelity CSV or manually enter positions to track P&L, cost bases, and options exposure across all sectors.</div>
             <div style={{ display: "flex", gap: 8 }}>
               <button style={S.btn}>Upload Fidelity CSV</button>
-              <button style={{ ...S.btn, background: "#f4f5f7" }}>Manual Entry</button>
-              <button style={{ ...S.btn, background: "#f4f5f7" }}>Import Options</button>
+              <button style={{ ...S.btn, background: "#21262d" }}>Manual Entry</button>
+              <button style={{ ...S.btn, background: "#21262d" }}>Import Options</button>
             </div>
           </div>
         </div>
@@ -1486,7 +1500,7 @@ Exited buy zone: COHR (rallied above $230)
 
   return (
     <div>
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #e8ecf0" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["memo", "digest", "thread", "api"].map(t => (
           <button key={t} onClick={() => setExportTab(t)} style={{ padding: "8px 16px", background: exportTab === t ? "#0d1117" : "transparent", color: exportTab === t ? S.green : S.muted, border: "none", borderBottom: exportTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t}</button>
         ))}
@@ -1543,7 +1557,7 @@ Exited buy zone: COHR (rallied above $230)
           <div style={{ ...S.label, marginBottom: 12 }}>API ENDPOINTS — {endpoints.length} AVAILABLE</div>
           <div style={{ color: S.muted, fontSize: 12, marginBottom: 16 }}>Every feature exposed as an API. Build mobile widgets, Apple Watch complications, Telegram bots, Shortcuts automations.</div>
           {endpoints.map((ep, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #f0f2f5" }}>
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #21262d" }}>
               <span style={{ color: ep.method === "GET" ? S.green : S.yellow, fontWeight: "bold", width: 40, fontSize: 11 }}>{ep.method}</span>
               <span style={{ color: S.cyan, fontFamily: "'DM Sans', sans-serif", fontSize: 12, flex: 1 }}>{ep.path}</span>
               <span style={{ color: S.muted, fontSize: 11 }}>{ep.description}</span>
@@ -1559,7 +1573,7 @@ export default function PhotonicsCenter() {
   const [subTab, setSubTab] = useState("DASHBOARD");
   return (
     <div style={{ ...S.mono }}>
-      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #e8ecf0", overflowX: "auto" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #30363d", overflowX: "auto" }}>
         {PHOTONICS_SUBTABS.map(t => (
           <button key={t} onClick={() => setSubTab(t)}
             style={{
@@ -1588,6 +1602,7 @@ export default function PhotonicsCenter() {
       {subTab === "RISK" && <RiskAnalytics />}
       {subTab === "NEWS" && <NewsFeed />}
       {subTab === "ALERTS" && <AlertsPanel />}
+      {subTab === "EDUCATION" && <PhotonicsEducation />}
         {subTab === "GRAPH" && <PhotonicsGraph />}
         {subTab === "MODELS" && <PhotonicsModels />}
         {subTab === "SIGNALS" && <PhotonicsSignals />}
@@ -1603,60 +1618,72 @@ function PhotonicsDashboard({ onNavigate }: { onNavigate: (tab: string) => void 
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
-    fetch(`${API}
-/dashboard`).then(r => r.json()).then(setData).catch(console.error).finally(() => setLoading(false));
+    fetch(`${API}/dashboard`).then(r => r.json()).then(setData).catch(console.error).finally(() => setLoading(false));
   }, []);
   if (loading) return <div style={{ color: S.muted, padding: 40, textAlign: "center" }}>Loading dashboard...</div>;
   if (!data) return <div style={{ color: S.red, padding: 40 }}>Failed to load dashboard</div>;
+  const moversData = (data.top_movers || []).map((m: any) => ({ ticker: m.ticker, change: m.change_pct || 0 }));
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <div style={{ fontSize: 18, color: "#0d9f4f", fontWeight: "bold" }}>PHOTONICS COMMAND CENTER</div>
+        <div style={{ fontSize: 18, color: S.cyan, fontWeight: "bold" }}>PHOTONICS COMMAND CENTER</div>
         <div style={{ color: S.dim, fontSize: 11 }}>19 tickers · {data.research_count} research docs · {data.thesis_count} thesis items</div>
       </div>
+      {/* Metric cards with colored left borders */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
-          { label: "Buy Zone", value: data.buy_zone_count, color: data.buy_zone_count > 0 ? S.green : S.muted, sub: "tickers at target" },
+          { label: "Buy Zone", value: data.buy_zone_count, color: data.buy_zone_count > 0 ? S.green : S.dim, sub: "tickers at target" },
           { label: "Universe", value: data.total_tickers, color: S.blue, sub: "tracked companies" },
           { label: "Research", value: data.research_count, color: S.cyan, sub: "deep dives stored" },
           { label: "Catalysts", value: data.upcoming_catalysts?.length || 0, color: S.yellow, sub: "upcoming events" },
         ].map(c => (
-          <div key={c.label} style={S.card}>
+          <div key={c.label} style={{ ...S.card, borderLeft: `3px solid ${c.color}`, position: "relative", overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, right: 0, width: 50, height: 50, background: `${c.color}10`, borderRadius: "0 0 0 50px" }} />
             <div style={S.label}>{c.label}</div>
-            <div style={{ fontSize: 28, fontWeight: "bold", color: c.color }}>{c.value}</div>
-            <div style={{ color: S.dim, fontSize: 11 }}>{c.sub}</div>
+            <div style={{ fontSize: 32, fontWeight: "bold", color: c.color, lineHeight: 1.2 }}>{c.value}</div>
+            <div style={{ color: S.dim, fontSize: 11, marginTop: 4 }}>{c.sub}</div>
           </div>
         ))}
       </div>
+      {/* Buy zone alerts */}
       {data.buy_zone_count > 0 && (
-        <div style={{ ...S.card, borderColor: S.green, background: "rgba(46, 160, 67, 0.05)" }}>
-          <div style={{ color: "#0d9f4f", fontWeight: "bold", marginBottom: 8 }}>🟢 BUY ZONE ALERTS</div>
+        <div style={{ ...S.card, borderColor: S.green, background: "rgba(46, 160, 67, 0.06)" }}>
+          <div style={{ color: S.green, fontWeight: "bold", marginBottom: 8 }}>🟢 BUY ZONE ALERTS</div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {data.buy_zone_tickers.map((t: any) => (
-              <div key={t.ticker} style={{ color: S.text }}>
-                <span style={{ color: "#0d9f4f", fontWeight: "bold" }}>{t.ticker}</span>
-                <span style={{ color: S.dim }}> ${t.price} (target ${t.target})</span>
+              <div key={t.ticker} style={{ background: "#0d1117", borderRadius: 6, padding: "6px 12px", border: "1px solid rgba(46,160,67,0.2)" }}>
+                <span style={{ color: S.green, fontWeight: "bold" }}>{t.ticker}</span>
+                <span style={{ color: S.muted, fontSize: 12 }}> ${t.price} → ${t.target}</span>
               </div>
             ))}
           </div>
         </div>
       )}
+      {/* Top Movers bar chart + Catalysts */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div style={S.card}>
           <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>TOP MOVERS TODAY</div>
-          {data.top_movers?.map((m: any) => (
-            <div key={m.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
-              <span style={{ color: S.text }}>{m.ticker}</span>
-              <span style={{ color: m.change_pct >= 0 ? S.green : S.red, fontWeight: "bold" }}>{m.change_pct >= 0 ? "+" : ""}{m.change_pct}%</span>
-            </div>
-          ))}
+          {moversData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(160, moversData.length * 28)}>
+              <BarChart data={moversData} layout="vertical" margin={{ top: 0, right: 20, left: 45, bottom: 0 }}>
+                <XAxis type="number" fontSize={10} tick={{ fill: S.dim }} tickFormatter={(v: number) => `${v}%`} axisLine={false} />
+                <YAxis type="category" dataKey="ticker" fontSize={11} tick={{ fill: S.text }} axisLine={false} tickLine={false} width={45} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="change" name="Change %" radius={[0, 4, 4, 0]}>
+                  {moversData.map((m: any, i: number) => (
+                    <Cell key={i} fill={m.change >= 0 ? S.green : S.red} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div style={{ color: S.dim, fontSize: 12 }}>No mover data available</div>}
         </div>
         <div style={S.card}>
           <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>UPCOMING CATALYSTS</div>
-          {data.upcoming_catalysts?.length > 0 ? data.upcoming_catalysts.map((c: any) => (
-            <div key={c.id} style={{ padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+          {data.upcoming_catalysts?.length > 0 ? data.upcoming_catalysts.slice(0, 6).map((c: any) => (
+            <div key={c.id} style={{ padding: "6px 0", borderBottom: "1px solid #21262d" }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: S.blue }}>{c.ticker}</span>
+                <span style={{ color: S.blue, fontWeight: "bold" }}>{c.ticker}</span>
                 <span style={{ color: S.dim, fontSize: 11 }}>{c.date}</span>
               </div>
               <div style={{ color: S.muted, fontSize: 12 }}>{c.title}</div>
@@ -1664,9 +1691,23 @@ function PhotonicsDashboard({ onNavigate }: { onNavigate: (tab: string) => void 
           )) : <div style={{ color: S.dim, fontSize: 12 }}>No upcoming catalysts. Add some in the CATALYSTS tab.</div>}
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        {["WATCHLIST", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS"].map(t => (
-          <button key={t} onClick={() => onNavigate(t)} style={S.btnSecondary}>{t} →</button>
+      {/* Supply chain step performance grid */}
+      <div style={{ ...S.card, marginTop: 12 }}>
+        <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>SUPPLY CHAIN OVERVIEW</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 6 }}>
+          {Object.entries(STEP_NAMES).map(([step, name]) => (
+            <div key={step} style={{ background: "#0d1117", borderRadius: 6, padding: "10px 6px", textAlign: "center", border: "1px solid #30363d", cursor: "pointer" }}
+              onClick={() => onNavigate("SUPPLY CHAIN")}>
+              <div style={{ fontSize: 18, marginBottom: 2 }}>{["⛏️","💎","🔬","🏭","✂️","🔧","📡","🖥️"][Number(step)]}</div>
+              <div style={{ color: S.muted, fontSize: 9, letterSpacing: 0.5 }}>{name.toUpperCase()}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Navigation buttons */}
+      <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+        {["WATCHLIST", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS", "EDUCATION"].map(t => (
+          <button key={t} onClick={() => onNavigate(t)} style={{ ...S.btnSecondary, fontSize: 11 }}>{t} →</button>
         ))}
       </div>
     </div>
@@ -1679,6 +1720,10 @@ function PhotonicsWatchlist() {
   const [filter, setFilter] = useState("all");
   const [editingTicker, setEditingTicker] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState("");
+  const [sortCol, setSortCol] = useState<string>("pct_to_target");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [selectedTicker, setSelectedTicker] = useState<string | null>(null);
+  const [hoveredRow, setHoveredRow] = useState<string | null>(null);
   const fetchWatchlist = async () => {
     setLoading(true);
     try { const res = await fetch(`${API}/watchlist`); setData(await res.json()); }
@@ -1696,6 +1741,16 @@ function PhotonicsWatchlist() {
   if (filter === "buy_zone") items = items.filter((w: any) => w.in_buy_zone);
   if (filter === "pure_play") items = items.filter((w: any) => w.pure_play);
   const buyZoneCount = (data.watchlist || []).filter((w: any) => w.in_buy_zone).length;
+  // Sort
+  const sortedItems = [...items].sort((a: any, b: any) => {
+    let av = a[sortCol], bv = b[sortCol];
+    if (typeof av === "string") av = av.toLowerCase();
+    if (typeof bv === "string") bv = bv.toLowerCase();
+    if (av == null) return 1; if (bv == null) return -1;
+    return sortDir === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+  const chartData = items.map((w: any) => ({ ticker: w.ticker, pct: w.pct_to_target ?? 0 })).sort((a: any, b: any) => a.pct - b.pct);
+  const pctColor = (p: number) => p <= 0 ? S.green : p <= 10 ? S.yellow : p <= 25 ? S.blue : S.dim;
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1707,25 +1762,63 @@ function PhotonicsWatchlist() {
         <div style={{ display: "flex", gap: 6 }}>
           {(["all", "buy_zone", "pure_play"] as const).map(f => (
             <button key={f} onClick={() => setFilter(f)}
-              style={{ ...S.btnSmall, background: filter === f ? "#1a8c5e" : "#2a3441", color: filter === f ? "#fff" : "#aaa" }}>
+              style={{ ...S.btnSmall, background: filter === f ? "#1a8c5e" : "#21262d", color: filter === f ? "#fff" : "#8b949e" }}>
               {f === "all" ? "ALL" : f === "buy_zone" ? "BUY ZONE" : "PURE PLAY"}
             </button>
           ))}
           <button onClick={fetchWatchlist} style={S.btnSmall}>↻ REFRESH</button>
         </div>
       </div>
+      {/* Distance to target chart */}
+      {chartData.length > 0 && (
+        <div style={{ ...S.card, marginBottom: 16 }}>
+          <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>DISTANCE TO TARGET</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="ticker" fontSize={10} tick={{ fill: S.text }} angle={-45} textAnchor="end" />
+              <YAxis fontSize={10} tick={{ fill: S.dim }} tickFormatter={(v: number) => `${v}%`} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="pct" name="% to Target" radius={[4, 4, 0, 0]}>
+                {chartData.map((w: any, i: number) => (
+                  <Cell key={i} fill={pctColor(w.pct)} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <div style={{ display: "flex", gap: 16, justifyContent: "center", marginTop: 8 }}>
+            {[{ label: "Buy Zone (≤0%)", color: S.green }, { label: "Near (≤10%)", color: S.yellow }, { label: "Far (≤25%)", color: S.blue }, { label: "Distant (>25%)", color: S.dim }].map(l => (
+              <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: S.muted }}>
+                <div style={{ width: 8, height: 8, borderRadius: 2, background: l.color }} />{l.label}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Sortable table */}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
-            <tr style={{ borderBottom: "1px solid #2a3441" }}>
-              {["TICKER", "PRICE", "CHG%", "TARGET", "% TO TARGET", "STEP", "STATUS"].map(h => (
-                <th key={h} style={{ padding: "8px 12px", textAlign: "left", color: S.muted, fontSize: 11, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
+            <tr style={{ borderBottom: "2px solid #30363d" }}>
+              {[
+                { key: "ticker", label: "TICKER" }, { key: "current_price", label: "PRICE" },
+                { key: "change_pct", label: "CHG%" }, { key: "target", label: "TARGET" },
+                { key: "pct_to_target", label: "% TO TARGET" }, { key: "step", label: "STEP" },
+                { key: "in_buy_zone", label: "STATUS" },
+              ].map(h => (
+                <th key={h.key} onClick={() => { if (sortCol === h.key) setSortDir(sortDir === "asc" ? "desc" : "asc"); else { setSortCol(h.key); setSortDir("asc"); } }}
+                  style={{ padding: "8px 12px", textAlign: "left", color: sortCol === h.key ? S.cyan : S.muted, fontSize: 11, fontWeight: sortCol === h.key ? "bold" : "normal", letterSpacing: 1, cursor: "pointer", userSelect: "none" }}>
+                  {h.label} {sortCol === h.key ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {items.map((w: any) => (
-              <tr key={w.ticker} style={{ borderBottom: "1px solid #e8ecf0", background: w.in_buy_zone ? "rgba(46, 160, 67, 0.04)" : "transparent" }}>
+            {sortedItems.map((w: any) => (
+              <tr key={w.ticker}
+                onMouseEnter={() => setHoveredRow(w.ticker)} onMouseLeave={() => setHoveredRow(null)}
+                onClick={() => setSelectedTicker(selectedTicker === w.ticker ? null : w.ticker)}
+                style={{ borderBottom: "1px solid #21262d", background: hoveredRow === w.ticker ? "#1c2333" : w.in_buy_zone ? "rgba(46, 160, 67, 0.04)" : "transparent", cursor: "pointer", transition: "background 0.15s" }}>
                 <td style={{ padding: "10px 12px" }}>
                   <span style={{ color: S.text, fontWeight: "bold" }}>{w.ticker}</span>
                   <span style={{ color: S.dim, fontSize: 11, marginLeft: 8 }}>{w.name}</span>
@@ -1735,7 +1828,7 @@ function PhotonicsWatchlist() {
                 <td style={{ padding: "10px 12px", color: w.change_pct >= 0 ? S.green : S.red, fontWeight: "bold" }}>
                   {w.change_pct >= 0 ? "+" : ""}{w.change_pct}%
                 </td>
-                <td style={{ padding: "10px 12px" }}>
+                <td style={{ padding: "10px 12px" }} onClick={e => e.stopPropagation()}>
                   {editingTicker === w.ticker ? (
                     <div style={{ display: "flex", gap: 4 }}>
                       <input value={editTarget} onChange={e => setEditTarget(e.target.value)} onKeyDown={e => e.key === "Enter" && updateTarget(w.ticker)}
@@ -1747,19 +1840,52 @@ function PhotonicsWatchlist() {
                       style={{ color: S.blue, cursor: "pointer" }}>${w.target}</span>
                   )}
                 </td>
-                <td style={{ padding: "10px 12px", color: w.pct_to_target <= 0 ? S.green : w.pct_to_target <= 10 ? S.yellow : S.muted }}>
-                  {w.pct_to_target !== null ? `${w.pct_to_target > 0 ? "+" : ""}${w.pct_to_target}%` : "—"}
+                <td style={{ padding: "10px 12px" }}>
+                  <span style={{ color: pctColor(w.pct_to_target ?? 99), background: `${pctColor(w.pct_to_target ?? 99)}18`, padding: "2px 8px", borderRadius: 4, fontSize: 12, fontWeight: "bold" }}>
+                    {w.pct_to_target !== null ? `${w.pct_to_target > 0 ? "+" : ""}${w.pct_to_target}%` : "—"}
+                  </span>
                 </td>
                 <td style={{ padding: "10px 12px", color: S.dim, fontSize: 11 }}>{STEP_NAMES[w.step] || `Step ${w.step}`}</td>
                 <td style={{ padding: "10px 12px" }}>
-                  {w.in_buy_zone && <span style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 12 }}>🟢 BUY ZONE</span>}
+                  {w.in_buy_zone && <span style={{ color: S.green, fontWeight: "bold", fontSize: 12 }}>● BUY ZONE</span>}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <div style={{ color: S.dim, fontSize: 11, marginTop: 12 }}>Last updated: {new Date(data.updated_at).toLocaleString()} · Click target price to edit</div>
+      {/* Detail panel */}
+      {selectedTicker && (() => {
+        const w = items.find((i: any) => i.ticker === selectedTicker);
+        if (!w) return null;
+        return (
+          <div style={{ ...S.card, borderColor: S.cyan, marginTop: 12, borderLeft: `3px solid ${S.cyan}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <span style={{ color: S.text, fontWeight: "bold", fontSize: 20 }}>{w.ticker}</span>
+                <span style={{ color: S.dim, fontSize: 13, marginLeft: 12 }}>{w.name}</span>
+              </div>
+              <button onClick={() => setSelectedTicker(null)} style={S.btnSmall}>✕ CLOSE</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10 }}>
+              {[
+                { label: "PRICE", value: `$${w.current_price}`, color: S.text },
+                { label: "CHANGE", value: `${w.change_pct >= 0 ? "+" : ""}${w.change_pct}%`, color: w.change_pct >= 0 ? S.green : S.red },
+                { label: "TARGET", value: `$${w.target}`, color: S.blue },
+                { label: "% TO TARGET", value: `${w.pct_to_target != null ? (w.pct_to_target > 0 ? "+" : "") + w.pct_to_target + "%" : "—"}`, color: pctColor(w.pct_to_target ?? 99) },
+                { label: "SUPPLY STEP", value: STEP_NAMES[w.step] || `Step ${w.step}`, color: S.cyan },
+              ].map(m => (
+                <div key={m.label} style={{ background: "#0d1117", borderRadius: 6, padding: 12, textAlign: "center", border: "1px solid #30363d" }}>
+                  <div style={{ color: S.muted, fontSize: 10, letterSpacing: 1, marginBottom: 4 }}>{m.label}</div>
+                  <div style={{ color: m.color, fontSize: 18, fontWeight: "bold" }}>{m.value}</div>
+                </div>
+              ))}
+            </div>
+            {w.in_buy_zone && <div style={{ marginTop: 12, padding: "8px 12px", background: "rgba(46,160,67,0.08)", border: "1px solid rgba(46,160,67,0.3)", borderRadius: 6, color: S.green, fontSize: 12, fontWeight: "bold" }}>● IN BUY ZONE — Price is at or below target</div>}
+          </div>
+        );
+      })()}
+      <div style={{ color: S.dim, fontSize: 11, marginTop: 12 }}>Last updated: {new Date(data.updated_at).toLocaleString()} · Click row for details · Click target price to edit</div>
     </div>
   );
 }
@@ -1819,7 +1945,7 @@ function SupplyChainMap() {
                 <div style={{ color: S.text, marginBottom: 8, fontSize: 13 }}>{step.description}</div>
                 <div style={{ color: S.yellow, fontSize: 12, marginBottom: 12 }}>⚠ Bottleneck: {step.bottleneck}</div>
                 {step.companies.map((c: any) => (
-                  <div key={c.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #e8ecf0" }}>
+                  <div key={c.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: "1px solid #30363d" }}>
                     <div><span style={{ color: S.text, fontWeight: "bold" }}>{c.ticker}</span><span style={{ color: S.dim, marginLeft: 8, fontSize: 12 }}>{c.name}</span></div>
                     <div style={{ textAlign: "right" }}>
                       <span style={{ color: S.text, marginRight: 12 }}>${c.price}</span>
@@ -1862,6 +1988,8 @@ function ResearchLibrary() {
   const [showAdd, setShowAdd] = useState(false);
   const [filterTicker, setFilterTicker] = useState("");
   const [filterTag, setFilterTag] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"list" | "coverage" | "tags">("list");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
@@ -1888,6 +2016,18 @@ function ResearchLibrary() {
   const deleteResearch = async (id: string) => {
     await fetch(`${API}/research/${id}`, { method: "DELETE" }); fetchResearch();
   };
+  // Compute coverage data
+  const coverageData = (() => {
+    const counts: Record<string, number> = {};
+    research.forEach(doc => doc.tickers?.forEach((t: string) => { counts[t] = (counts[t] || 0) + 1; }));
+    return Object.entries(counts).map(([ticker, count]) => ({ ticker, count })).sort((a, b) => b.count - a.count);
+  })();
+  const tagData = (() => {
+    const counts: Record<string, number> = {};
+    research.forEach(doc => doc.tags?.forEach((t: string) => { counts[t] = (counts[t] || 0) + 1; }));
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  })();
+  const filteredResearch = research.filter(doc => !searchQuery || doc.title?.toLowerCase().includes(searchQuery.toLowerCase()) || doc.content?.toLowerCase().includes(searchQuery.toLowerCase()));
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1895,15 +2035,54 @@ function ResearchLibrary() {
           <span style={{ color: S.text, fontWeight: "bold", fontSize: 15 }}>RESEARCH LIBRARY</span>
           <span style={{ color: S.dim, fontSize: 12, marginLeft: 12 }}>{research.length} docs</span>
         </div>
-        <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ ADD DEEP DIVE"}</button>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["list", "coverage", "tags"] as const).map(v => (
+            <button key={v} onClick={() => setViewMode(v)}
+              style={{ ...S.btnSmall, background: viewMode === v ? "#1a8c5e" : "#21262d", color: viewMode === v ? "#fff" : "#8b949e" }}>
+              {v === "list" ? "📄 LIST" : v === "coverage" ? "📊 COVERAGE" : "🏷️ TAGS"}
+            </button>
+          ))}
+          <button onClick={() => setShowAdd(!showAdd)} style={S.btn}>{showAdd ? "CANCEL" : "+ ADD DEEP DIVE"}</button>
+        </div>
       </div>
+      {/* Filters & search */}
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <input value={filterTicker} onChange={e => setFilterTicker(e.target.value.toUpperCase())} placeholder="Filter by ticker" style={{ ...S.input, width: 160 }} />
-        <input value={filterTag} onChange={e => setFilterTag(e.target.value)} placeholder="Filter by tag" style={{ ...S.input, width: 160 }} />
-        {(filterTicker || filterTag) && <button onClick={() => { setFilterTicker(""); setFilterTag(""); }} style={S.btnSmall}>Clear</button>}
+        <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="🔍 Search research..." style={{ ...S.input, width: 220 }} />
+        <input value={filterTicker} onChange={e => setFilterTicker(e.target.value.toUpperCase())} placeholder="Filter by ticker" style={{ ...S.input, width: 140 }} />
+        <input value={filterTag} onChange={e => setFilterTag(e.target.value)} placeholder="Filter by tag" style={{ ...S.input, width: 140 }} />
+        {(filterTicker || filterTag || searchQuery) && <button onClick={() => { setFilterTicker(""); setFilterTag(""); setSearchQuery(""); }} style={S.btnSmall}>Clear</button>}
       </div>
+      {/* Coverage chart view */}
+      {viewMode === "coverage" && coverageData.length > 0 && (
+        <div style={{ ...S.card, marginBottom: 16 }}>
+          <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>RESEARCH COVERAGE BY TICKER</div>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={coverageData} margin={{ top: 5, right: 10, left: 10, bottom: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="ticker" fontSize={10} tick={{ fill: S.text }} angle={-45} textAnchor="end" />
+              <YAxis fontSize={10} tick={{ fill: S.dim }} allowDecimals={false} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="count" name="Research Docs" fill={S.cyan} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {/* Tag cloud view */}
+      {viewMode === "tags" && tagData.length > 0 && (
+        <div style={{ ...S.card, marginBottom: 16 }}>
+          <div style={{ color: S.text, fontWeight: "bold", marginBottom: 12, fontSize: 13 }}>TAG CLOUD</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {tagData.map(([tag, count]) => (
+              <button key={tag} onClick={() => { setFilterTag(tag); setViewMode("list"); }}
+                style={{ padding: "6px 14px", background: `${S.blue}15`, border: `1px solid ${S.blue}40`, borderRadius: 20, color: S.blue, fontSize: 10 + Math.min(count * 2, 8), cursor: "pointer", fontFamily: "'DM Sans', sans-serif" }}>
+                {tag} <span style={{ color: S.muted, fontSize: 10 }}>({count})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {showAdd && (
-        <div style={{ ...S.card, borderColor: S.green }}>
+        <div style={{ ...S.card, borderColor: S.green, borderLeft: `3px solid ${S.green}` }}>
           <input value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Title" style={{ ...S.input, marginBottom: 8 }} />
           <textarea value={newContent} onChange={e => setNewContent(e.target.value)} placeholder="Paste your deep dive, analysis, or notes here..."
             style={{ ...S.input, height: 200, resize: "vertical", marginBottom: 8 }} />
@@ -1915,26 +2094,30 @@ function ResearchLibrary() {
           <span style={{ color: S.dim, fontSize: 11, marginLeft: 12 }}>Tickers will be auto-detected from content</span>
         </div>
       )}
-      {loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
-        research.map(doc => (
-          <div key={doc.id} style={{ ...S.card, cursor: "pointer" }} onClick={() => setExpanded(expanded === doc.id ? null : doc.id)}>
+      {/* Document list */}
+      {viewMode === "list" && (loading ? <div style={{ color: S.muted, padding: 20 }}>Loading...</div> :
+        filteredResearch.map(doc => (
+          <div key={doc.id} style={{ ...S.card, cursor: "pointer", borderLeft: `3px solid ${S.blue}`, transition: "border-color 0.2s" }} onClick={() => setExpanded(expanded === doc.id ? null : doc.id)}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ color: S.text, fontWeight: "bold", fontSize: 14 }}>{doc.title}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ color: S.text, fontWeight: "bold", fontSize: 14 }}>{doc.title}</div>
+                  <span style={{ color: S.dim, fontSize: 14 }}>{expanded === doc.id ? "−" : "+"}</span>
+                </div>
                 <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
-                  {doc.tickers?.map((t: string) => <span key={t} style={{ color: S.blue, fontSize: 11, background: "rgba(88,166,255,0.1)", padding: "2px 6px", borderRadius: 3 }}>{t}</span>)}
-                  {doc.tags?.map((t: string) => <span key={t} style={{ color: S.muted, fontSize: 11, background: "#f4f5f7", padding: "2px 6px", borderRadius: 3 }}>{t}</span>)}
+                  {doc.tickers?.map((t: string) => <span key={t} style={{ color: S.blue, fontSize: 11, background: "rgba(88,166,255,0.1)", padding: "2px 6px", borderRadius: 3, fontWeight: "bold" }}>{t}</span>)}
+                  {doc.tags?.map((t: string) => <span key={t} style={{ color: S.muted, fontSize: 11, background: "#21262d", padding: "2px 6px", borderRadius: 3 }}>{t}</span>)}
                 </div>
               </div>
-              <div style={{ textAlign: "right" }}>
+              <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 12 }}>
                 <div style={{ color: S.dim, fontSize: 11 }}>{new Date(doc.created_at).toLocaleDateString()}</div>
-                <div style={{ color: S.dim, fontSize: 11 }}>{doc.word_count} words</div>
+                <div style={{ color: S.dim, fontSize: 11 }}>{doc.word_count} words · {Math.max(1, Math.round((doc.word_count || 0) / 200))} min read</div>
               </div>
             </div>
             {expanded === doc.id && (
               <div style={{ marginTop: 12 }}>
                 <div style={{ color: S.text, fontSize: 13, whiteSpace: "pre-wrap", lineHeight: 1.6, maxHeight: 400, overflowY: "auto",
-                  padding: 12, background: "#f8f9fb", borderRadius: 4 }}>{doc.content}</div>
+                  padding: 12, background: "#0d1117", borderRadius: 6, border: "1px solid #30363d" }}>{doc.content}</div>
                 <div style={{ marginTop: 8, display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   {doc.source && <a href={doc.source} target="_blank" rel="noreferrer" style={{ color: S.blue, fontSize: 12 }}>Source ↗</a>}
                   <button onClick={(e) => { e.stopPropagation(); deleteResearch(doc.id); }} style={S.btnDanger}>DELETE</button>
@@ -1943,8 +2126,8 @@ function ResearchLibrary() {
             )}
           </div>
         ))
-      }
-      {!loading && research.length === 0 && (
+      )}
+      {!loading && research.length === 0 && viewMode === "list" && (
         <div style={{ color: S.dim, padding: 40, textAlign: "center" }}>No research yet. Click + ADD DEEP DIVE to start building your library.</div>
       )}
     </div>
@@ -2228,14 +2411,14 @@ function ThesisScorecard() {
                 <div key={type}>
                   <div style={{ color: type === "bull" ? S.green : S.red, fontWeight: "bold", fontSize: 12, marginBottom: 8 }}>{type.toUpperCase()} CASE ({data[type].length})</div>
                   {data[type].map((item: any) => (
-                    <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #e8ecf0" }}>
+                    <div key={item.id} style={{ padding: "8px 0", borderBottom: "1px solid #30363d" }}>
                       <div style={{ color: item.status === "invalidated" ? S.dim : S.text, fontSize: 13,
                         textDecoration: item.status === "invalidated" ? "line-through" : "none" }}>{item.item}</div>
                       <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
                         {(["active", "confirmed", "invalidated"] as const).map(st => (
                           <button key={st} onClick={() => updateStatus(item.id, st)}
                             style={{ ...S.btnSmall, fontSize: 10, background: item.status === st ?
-                              (st === "confirmed" ? S.green : st === "invalidated" ? S.red : "#2a3441") : "#1e2733",
+                              (st === "confirmed" ? S.green : st === "invalidated" ? S.red : "#30363d") : "#1e2733",
                               color: item.status === st ? "#fff" : S.dim }}>
                             {st.toUpperCase()}
                           </button>
@@ -2293,7 +2476,7 @@ function CatalystCalendar() {
         <select value={filterTicker} onChange={e => setFilterTicker(e.target.value)} style={S.select}>
           <option value="">All Tickers</option>{DEFAULT_WATCHLIST_TICKERS.map(t => <option key={t} value={t}>{t}</option>)}
         </select>
-        <button onClick={() => setShowPast(!showPast)} style={{ ...S.btnSmall, background: showPast ? "#1a8c5e" : "#2a3441" }}>
+        <button onClick={() => setShowPast(!showPast)} style={{ ...S.btnSmall, background: showPast ? "#1a8c5e" : "#30363d" }}>
           {showPast ? "SHOWING ALL" : "UPCOMING ONLY"}
         </button>
       </div>
@@ -2368,7 +2551,7 @@ function TechnicalScanner() {
   const [detail, setDetail] = useState<any>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const API = "http://localhost:8001/photonics/technicals";
+  const API = `${BASE}/photonics/technicals`;
 
   const fetchScan = async () => {
     setLoading(true);
@@ -2420,7 +2603,7 @@ function TechnicalScanner() {
     const clr = score >= 70 ? "#2ea043" : score >= 50 ? "#58a6ff" : score >= 30 ? "#d29922" : "#f85149";
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={{ width: 60, height: 6, background: "#f4f5f7", borderRadius: 3, overflow: "hidden" }}>
+        <div style={{ width: 60, height: 6, background: "#21262d", borderRadius: 3, overflow: "hidden" }}>
           <div style={{ width: `${score}%`, height: "100%", background: clr, borderRadius: 3 }}/>
         </div>
         <span style={{ color: clr, fontSize: 11, fontWeight: "bold" }}>{score}</span>
@@ -2429,9 +2612,9 @@ function TechnicalScanner() {
   };
 
   const S: Record<string, any> = {
-    card: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 16, marginBottom: 12 },
+    card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 16, marginBottom: 12 },
     btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
-    btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
+    btnSmall: { padding: "4px 10px", background: "#30363d", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
   };
 
   return (
@@ -2441,7 +2624,7 @@ function TechnicalScanner() {
         <div style={{ display: "flex", gap: 6 }}>
           {(["scanner","heatmap","correlations"] as const).map(v => (
             <button key={v} onClick={() => switchView(v)}
-              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#2a3441", color: view === v ? "#fff" : "#aaa" }}>
+              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#30363d", color: view === v ? "#fff" : "#aaa" }}>
               {v === "scanner" ? "📊 SCANNER" : v === "heatmap" ? "🔥 HEATMAP" : "🔗 CORRELATIONS"}
             </button>
           ))}
@@ -2497,7 +2680,7 @@ function TechnicalScanner() {
                         <div style={S.card}>
                           <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>MOVING AVERAGES</div>
                           {[{l:"SMA 20",v:detail.sma20},{l:"SMA 50",v:detail.sma50},{l:"SMA 200",v:detail.sma200}].map(s => (
-                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
                               <span style={{ color: "#7d8590", fontSize: 12 }}>{s.l}</span>
                               <div>
                                 <span style={{ color: "#e6edf3", fontSize: 12 }}>${s.v || "—"}</span>
@@ -2516,7 +2699,7 @@ function TechnicalScanner() {
                             {l:"20D High",v:detail.recent_high},
                             {l:"20D Low",v:detail.recent_low},
                           ].map(s => (
-                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+                            <div key={s.l} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
                               <span style={{ color: "#7d8590", fontSize: 12 }}>{s.l}</span>
                               <div>
                                 <span style={{ color: "#e6edf3", fontSize: 12 }}>${s.v || "—"}</span>
@@ -2560,7 +2743,7 @@ function TechnicalScanner() {
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead>
-                      <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                      <tr style={{ borderBottom: "1px solid #30363d" }}>
                         {["TICKER","PRICE","CHG%","SCORE","SIGNAL","RSI","MACD","TREND","VOL"].map(h => (
                           <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: "#7d8590", fontSize: 10, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
                         ))}
@@ -2569,7 +2752,7 @@ function TechnicalScanner() {
                     <tbody>
                       {scan.map((s: any) => s.error ? null : (
                         <tr key={s.ticker} onClick={() => fetchDetail(s.ticker)}
-                          style={{ borderBottom: "1px solid #e8ecf0", cursor: "pointer", transition: "background 0.15s" }}
+                          style={{ borderBottom: "1px solid #30363d", cursor: "pointer", transition: "background 0.15s" }}
                           onMouseOver={e => (e.currentTarget.style.background = "rgba(88,166,255,0.03)")}
                           onMouseOut={e => (e.currentTarget.style.background = "transparent")}>
                           <td style={{ padding: "10px", color: "#e6edf3", fontWeight: "bold" }}>{s.ticker}</td>
@@ -2611,7 +2794,7 @@ function TechnicalScanner() {
                   const intensity = Math.min(Math.abs(val) / 20, 1);
                   const bg = val >= 0 ? `rgba(46, 160, 67, ${intensity * 0.3 + 0.05})` : `rgba(248, 81, 73, ${intensity * 0.3 + 0.05})`;
                   return (
-                    <div key={h.ticker} style={{ background: bg, border: "1px solid #e8ecf0", borderRadius: 6, padding: 12, textAlign: "center" }}>
+                    <div key={h.ticker} style={{ background: bg, border: "1px solid #30363d", borderRadius: 6, padding: 12, textAlign: "center" }}>
                       <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 14 }}>{h.ticker}</div>
                       <div style={{ color: "#e6edf3", fontSize: 12 }}>${h.price}</div>
                       <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, fontSize: 10 }}>
@@ -2635,7 +2818,7 @@ function TechnicalScanner() {
                 <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>MOST CORRELATED PAIRS</div>
                 <div style={{ color: "#484f58", fontSize: 11, marginBottom: 8 }}>Move together — diversification risk</div>
                 {correlations.top_correlated?.map((p: any, i: number) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
                     <span style={{ color: "#e6edf3", fontSize: 12 }}>{p.ticker1} ↔ {p.ticker2}</span>
                     <span style={{ color: p.correlation > 0.7 ? "#f85149" : p.correlation > 0.5 ? "#d29922" : "#7d8590", fontWeight: "bold", fontSize: 12 }}>
                       {p.correlation}
@@ -2647,7 +2830,7 @@ function TechnicalScanner() {
                 <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 12 }}>LEAST CORRELATED PAIRS</div>
                 <div style={{ color: "#484f58", fontSize: 11, marginBottom: 8 }}>Move independently — best diversifiers</div>
                 {correlations.least_correlated?.map((p: any, i: number) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
                     <span style={{ color: "#e6edf3", fontSize: 12 }}>{p.ticker1} ↔ {p.ticker2}</span>
                     <span style={{ color: Math.abs(p.correlation) < 0.2 ? "#2ea043" : "#58a6ff", fontWeight: "bold", fontSize: 12 }}>
                       {p.correlation}
@@ -2672,8 +2855,23 @@ function PortfolioOverlay() {
   const [view, setView] = useState<"positions"|"gaps"|"add">("positions");
   const [addForm, setAddForm] = useState({ ticker: "", shares: "", avg_cost: "", account: "Individual", notes: "" });
   const [addStatus, setAddStatus] = useState("");
+  const [syncStatus, setSyncStatus] = useState("");
+  const [syncing, setSyncing] = useState(false);
 
-  const API = "http://localhost:8001/photonics/portfolio";
+  const API = `${BASE}/photonics/portfolio`;
+
+  const PHOTONICS_TICKERS = ["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
+
+  const syncFromFidelity = async () => {
+    setSyncing(true); setSyncStatus("");
+    try {
+      const res = await fetch(`${API}/sync-fidelity`, { method: "POST" });
+      const json = await res.json();
+      setSyncStatus(json.message || `Synced ${json.synced} positions`);
+      fetchPositions();
+    } catch { setSyncStatus("Error syncing from Fidelity"); }
+    setSyncing(false);
+  };
 
   const fetchPositions = async () => {
     setLoading(true);
@@ -2725,11 +2923,11 @@ function PortfolioOverlay() {
   };
 
   const S: Record<string, any> = {
-    card: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 16, marginBottom: 12 },
-    metricBox: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 14, textAlign: "center" as const },
-    input: { padding: "8px 12px", background: "#ffffff", border: "1px solid #2a3441", borderRadius: 4, color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%" },
+    card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 16, marginBottom: 12 },
+    metricBox: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 14, textAlign: "center" as const },
+    input: { padding: "8px 12px", background: "#161b22", border: "1px solid #30363d", borderRadius: 4, color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%" },
     btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
-    btnSmall: { padding: "4px 10px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
+    btnSmall: { padding: "4px 10px", background: "#30363d", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
   };
 
   const fmt = (n: number) => n >= 1000 ? `$${(n/1000).toFixed(1)}k` : `$${n.toFixed(0)}`;
@@ -2741,11 +2939,38 @@ function PortfolioOverlay() {
         <div style={{ display: "flex", gap: 6 }}>
           {(["positions","gaps","add"] as const).map(v => (
             <button key={v} onClick={() => switchView(v)}
-              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#2a3441", color: view === v ? "#fff" : "#aaa" }}>
+              style={{ ...S.btnSmall, background: view === v ? "#1a8c5e" : "#30363d", color: view === v ? "#fff" : "#aaa" }}>
               {v === "positions" ? "💼 POSITIONS" : v === "gaps" ? "🎯 TARGET GAPS" : "➕ ADD"}
             </button>
           ))}
           <button onClick={fetchPositions} style={S.btnSmall}>↻ REFRESH</button>
+          <button onClick={syncFromFidelity} disabled={syncing} style={{ ...S.btnSmall, background: "#1f6feb", color: "#fff" }}>{syncing ? "SYNCING..." : "⬇ SYNC FIDELITY"}</button>
+        </div>
+      </div>
+
+      {syncStatus && <div style={{ color: "#58a6ff", fontSize: 11, marginBottom: 8, padding: "6px 10px", background: "rgba(31,111,235,0.1)", borderRadius: 4, border: "1px solid rgba(31,111,235,0.2)" }}>{syncStatus}</div>}
+
+      {/* Universe Coverage Card */}
+      <div style={{ ...S.card, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ color: "#7d8590", fontSize: 10, letterSpacing: 1, textTransform: "uppercase" }}>Universe Coverage</span>
+          <span style={{ color: "#58a6ff", fontSize: 11, fontWeight: "bold" }}>
+            {data?.positions ? `${PHOTONICS_TICKERS.filter(t => data.positions.some((p: any) => p.ticker === t)).length}/${PHOTONICS_TICKERS.length} covered` : "—"}
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {PHOTONICS_TICKERS.map(t => {
+            const owned = data?.positions?.some((p: any) => p.ticker === t);
+            return (
+              <span key={t} style={{
+                padding: "3px 8px", borderRadius: 4, fontSize: 10, fontFamily: "'DM Sans', monospace", fontWeight: "bold",
+                background: owned ? "rgba(46,160,67,0.15)" : "rgba(125,133,144,0.1)",
+                color: owned ? "#2ea043" : "#484f58",
+                border: `1px solid ${owned ? "rgba(46,160,67,0.3)" : "rgba(125,133,144,0.15)"}`,
+                cursor: owned ? "default" : "pointer",
+              }}>{t}</span>
+            );
+          })}
         </div>
       </div>
 
@@ -2790,7 +3015,7 @@ function PortfolioOverlay() {
                   <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>BY ACCOUNT</div>
                   <div style={{ display: "flex", gap: 16 }}>
                     {Object.entries(data.by_account).map(([acct, info]: [string, any]) => (
-                      <div key={acct} style={{ flex: 1, padding: "8px 12px", background: "#ffffff", borderRadius: 4 }}>
+                      <div key={acct} style={{ flex: 1, padding: "8px 12px", background: "#161b22", borderRadius: 4 }}>
                         <div style={{ color: "#58a6ff", fontSize: 12, fontWeight: "bold" }}>{acct}</div>
                         <div style={{ color: "#e6edf3", fontSize: 14 }}>{fmt(info.value)}</div>
                         <div style={{ color: pctColor(info.pnl), fontSize: 11 }}>
@@ -2807,7 +3032,7 @@ function PortfolioOverlay() {
                 <div style={{ overflowX: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                     <thead>
-                      <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                      <tr style={{ borderBottom: "1px solid #30363d" }}>
                         {["","TICKER","ACCT","SHARES","AVG COST","PRICE","VALUE","P&L","P&L%","TARGET","GAP%","ZONE",""].map(h => (
                           <th key={h} style={{ padding: "8px 8px", textAlign: "left", color: "#7d8590", fontSize: 10, fontWeight: "normal", letterSpacing: 1 }}>{h}</th>
                         ))}
@@ -2815,7 +3040,7 @@ function PortfolioOverlay() {
                     </thead>
                     <tbody>
                       {data.positions.map((p: any, i: number) => (
-                        <tr key={i} style={{ borderBottom: "1px solid #e8ecf0", background: p.in_photonics_universe ? "rgba(88,166,255,0.02)" : "transparent" }}>
+                        <tr key={i} style={{ borderBottom: "1px solid #30363d", background: p.in_photonics_universe ? "rgba(88,166,255,0.02)" : "transparent" }}>
                           <td style={{ padding: "8px 6px" }}>
                             {p.in_photonics_universe && <span title="In photonics universe" style={{ fontSize: 10 }}>🔬</span>}
                           </td>
@@ -2902,7 +3127,7 @@ function PortfolioOverlay() {
                 <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ALL 19 TICKERS — Price vs Target</div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
-                    <tr style={{ borderBottom: "1px solid #2a3441" }}>
+                    <tr style={{ borderBottom: "1px solid #30363d" }}>
                       {["TICKER","PRICE","TARGET","GAP $","GAP %","OWNED","ZONE"].map(h => (
                         <th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>
                       ))}
@@ -2910,7 +3135,7 @@ function PortfolioOverlay() {
                   </thead>
                   <tbody>
                     {gaps.opportunities?.map((o: any) => (
-                      <tr key={o.ticker} style={{ borderBottom: "1px solid #e8ecf0" }}>
+                      <tr key={o.ticker} style={{ borderBottom: "1px solid #30363d" }}>
                         <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{o.ticker}</td>
                         <td style={{ padding: "8px", color: "#e6edf3" }}>${o.price}</td>
                         <td style={{ padding: "8px", color: "#58a6ff" }}>${o.buy_target}</td>
@@ -2976,7 +3201,7 @@ function PortfolioOverlay() {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"].map(t => (
                     <button key={t} onClick={() => setAddForm({...addForm, ticker: t})}
-                      style={{ ...S.btnSmall, background: addForm.ticker === t ? "#1a8c5e" : "#161b22", color: addForm.ticker === t ? "#fff" : "#7d8590", border: "1px solid #2a3441" }}>
+                      style={{ ...S.btnSmall, background: addForm.ticker === t ? "#1a8c5e" : "#161b22", color: addForm.ticker === t ? "#fff" : "#7d8590", border: "1px solid #30363d" }}>
                       {t}
                     </button>
                   ))}
@@ -2988,9 +3213,9 @@ function PortfolioOverlay() {
                 <div style={{ color: "#484f58", fontSize: 11, marginBottom: 12 }}>
                   Export from Fidelity → Positions → Download → Upload CSV here
                 </div>
-                <div style={{ color: "#7d8590", fontSize: 11, padding: 16, background: "#ffffff", borderRadius: 4, textAlign: "center" }}>
+                <div style={{ color: "#7d8590", fontSize: 11, padding: 16, background: "#161b22", borderRadius: 4, textAlign: "center" }}>
                   CSV import available via API: <code style={{ color: "#58a6ff" }}>POST /photonics/portfolio/import/fidelity</code>
-                  <br/><span style={{ fontSize: 10, color: "#484f58" }}>curl -X POST http://localhost:8001/photonics/portfolio/import/fidelity -F "file=@positions.csv"</span>
+                  <br/><span style={{ fontSize: 10, color: "#484f58" }}>curl -X POST {BASE}/photonics/portfolio/import/fidelity -F "file=@positions.csv"</span>
                 </div>
               </div>
             </div>
@@ -3005,13 +3230,13 @@ function PortfolioOverlay() {
 function RelativeStrength() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const API = "http://localhost:8001/photonics/advanced";
+  const API = `${BASE}/photonics/advanced`;
   useEffect(() => { (async () => { setLoading(true); try { const res = await fetch(`${API}/relative-strength`); setData(await res.json()); } catch (e) { console.error(e); } setLoading(false); })(); }, []);
   const pctColor = (v: number | null | undefined) => v == null ? "#484f58" : v >= 0 ? "#2ea043" : "#f85149";
   const S: any = {
   // Backgrounds
-  bg: "#ffffff",
-  card: { background: "#ffffff", borderRadius: 10, padding: 20, marginBottom: 12, border: "1px solid #e8ecf0", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" } as React.CSSProperties,
+  bg: "#161b22",
+  card: { background: "#161b22", borderRadius: 10, padding: 20, marginBottom: 12, border: "1px solid #30363d", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" } as React.CSSProperties,
   
   // Text colors
   text: "#1a1a2e",
@@ -3030,19 +3255,19 @@ function RelativeStrength() {
   yellowBg: "#fffbeb",
   
   // Form elements
-  input: { background: "#f4f5f7", border: "1px solid #e8ecf0", borderRadius: 6, padding: "8px 12px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" } as React.CSSProperties,
-  select: { background: "#f4f5f7", border: "1px solid #e8ecf0", borderRadius: 6, padding: "8px 12px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" } as React.CSSProperties,
+  input: { background: "#21262d", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" } as React.CSSProperties,
+  select: { background: "#21262d", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" } as React.CSSProperties,
   
   // Buttons
-  btn: { background: "#2563eb", border: "none", borderRadius: 6, padding: "8px 16px", color: "#ffffff", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 as any, cursor: "pointer" } as React.CSSProperties,
-  btnSmall: { background: "#f4f5f7", border: "1px solid #e8ecf0", borderRadius: 4, padding: "4px 10px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 11, cursor: "pointer" } as React.CSSProperties,
-  btnSecondary: { background: "#f4f5f7", border: "1px solid #e8ecf0", borderRadius: 6, padding: "8px 16px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 500 as any, cursor: "pointer" } as React.CSSProperties,
+  btn: { background: "#2563eb", border: "none", borderRadius: 6, padding: "8px 16px", color: "#161b22", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 600 as any, cursor: "pointer" } as React.CSSProperties,
+  btnSmall: { background: "#21262d", border: "1px solid #30363d", borderRadius: 4, padding: "4px 10px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 11, cursor: "pointer" } as React.CSSProperties,
+  btnSecondary: { background: "#21262d", border: "1px solid #30363d", borderRadius: 6, padding: "8px 16px", color: "#1a1a2e", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: 500 as any, cursor: "pointer" } as React.CSSProperties,
   
   // Labels
   label: { fontSize: 11, fontWeight: 600, color: "#8b92a0", textTransform: "uppercase" as const, letterSpacing: "0.06em", fontFamily: "'DM Sans', sans-serif" } as React.CSSProperties,
   
   // Borders
-  border: "#e8ecf0",
+  border: "#30363d",
 };
   if (loading) return <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Scanning relative strength... (~30s)</div>;
   if (!data) return <div style={{ color: "#f85149", padding: 20 }}>Error loading</div>;
@@ -3074,7 +3299,7 @@ function RelativeStrength() {
         <div style={S.card}>
           <div style={{ color: "#2ea043", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>🏆 LEADERS (1M RS vs SPY)</div>
           {data.leaders?.map((t: any) => (
-            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
               <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</span>
               <div><span style={{ color: pctColor(t.returns?.["1M"]), fontSize: 12 }}>{t.returns?.["1M"] > 0 ? "+" : ""}{t.returns?.["1M"]}%</span><span style={{ color: "#2ea043", fontSize: 11, marginLeft: 8 }}>RS: +{t.rs_vs_spy?.["1M"]}%</span></div>
             </div>
@@ -3083,7 +3308,7 @@ function RelativeStrength() {
         <div style={S.card}>
           <div style={{ color: "#f85149", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>📉 LAGGARDS</div>
           {data.laggards?.map((t: any) => (
-            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #e8ecf0" }}>
+            <div key={t.ticker} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #30363d" }}>
               <span style={{ color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</span>
               <div><span style={{ color: pctColor(t.returns?.["1M"]), fontSize: 12 }}>{t.returns?.["1M"] > 0 ? "+" : ""}{t.returns?.["1M"]}%</span><span style={{ color: "#f85149", fontSize: 11, marginLeft: 8 }}>RS: {t.rs_vs_spy?.["1M"]}%</span></div>
             </div>
@@ -3093,11 +3318,11 @@ function RelativeStrength() {
       <div style={S.card}>
         <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ALL TICKERS — RS vs S&P 500</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr style={{ borderBottom: "1px solid #2a3441" }}>
+          <thead><tr style={{ borderBottom: "1px solid #30363d" }}>
             {["TICKER","PRICE","1W","1M","3M","6M","RS 1W","RS 1M","RS 3M"].map(h => (<th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>))}
           </tr></thead>
           <tbody>{data.tickers?.map((t: any) => (
-            <tr key={t.ticker} style={{ borderBottom: "1px solid #e8ecf0" }}>
+            <tr key={t.ticker} style={{ borderBottom: "1px solid #30363d" }}>
               <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</td>
               <td style={{ padding: "8px", color: "#e6edf3" }}>${t.price}</td>
               {["1W","1M","3M","6M"].map(p => (<td key={p} style={{ padding: "8px", color: pctColor(t.returns?.[p]) }}>{t.returns?.[p] != null ? `${t.returns[p] > 0 ? "+" : ""}${t.returns[p]}%` : "—"}</td>))}
@@ -3114,10 +3339,10 @@ function RelativeStrength() {
 function RiskAnalytics() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const API = "http://localhost:8001/photonics/advanced";
+  const API = `${BASE}/photonics/advanced`;
   useEffect(() => { (async () => { setLoading(true); try { const res = await fetch(`${API}/risk`); setData(await res.json()); } catch (e) { console.error(e); } setLoading(false); })(); }, []);
   const riskColor = (tier: string) => tier === "HIGH" ? "#f85149" : tier === "MEDIUM" ? "#d29922" : "#2ea043";
-  const S = { card: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 16, marginBottom: 12 }, metric: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 14, textAlign: "center" as const } };
+  const S = { card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 16, marginBottom: 12 }, metric: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 14, textAlign: "center" as const } };
   if (loading) return <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Computing risk metrics... (~45s)</div>;
   if (!data || data.error) return <div style={{ color: "#f85149", padding: 20 }}>Error loading risk data</div>;
   const ss = data.sector_stats || {};
@@ -3135,11 +3360,11 @@ function RiskAnalytics() {
       <div style={S.card}>
         <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>RISK METRICS — Sorted by Sharpe</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead><tr style={{ borderBottom: "1px solid #2a3441" }}>
+          <thead><tr style={{ borderBottom: "1px solid #30363d" }}>
             {["TICKER","PRICE","BETA","VOL","DRAWDOWN","SHARPE","FROM HIGH","TIER"].map(h => (<th key={h} style={{ padding: "8px", textAlign: "left", color: "#7d8590", fontSize: 10, letterSpacing: 1 }}>{h}</th>))}
           </tr></thead>
           <tbody>{data.tickers?.map((t: any) => (
-            <tr key={t.ticker} style={{ borderBottom: "1px solid #e8ecf0" }}>
+            <tr key={t.ticker} style={{ borderBottom: "1px solid #30363d" }}>
               <td style={{ padding: "8px", color: "#e6edf3", fontWeight: "bold" }}>{t.ticker}</td>
               <td style={{ padding: "8px", color: "#e6edf3" }}>${t.price}</td>
               <td style={{ padding: "8px", color: t.beta > 1.5 ? "#f85149" : t.beta > 1 ? "#d29922" : "#2ea043" }}>{t.beta}</td>
@@ -3158,7 +3383,7 @@ function RiskAnalytics() {
           <div style={{ color: "#484f58", fontSize: 11, marginBottom: 10 }}>Based on Sharpe and volatility — not financial advice</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {data.position_sizing.conservative.map((p: any) => (
-              <div key={p.ticker} style={{ padding: "6px 12px", background: "#ffffff", borderRadius: 4, border: "1px solid #2a3441" }}>
+              <div key={p.ticker} style={{ padding: "6px 12px", background: "#161b22", borderRadius: 4, border: "1px solid #30363d" }}>
                 <span style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 12 }}>{p.ticker}</span>
                 <span style={{ color: "#58a6ff", fontSize: 12, marginLeft: 8 }}>{p.max_allocation_pct}%</span>
               </div>
@@ -3175,11 +3400,11 @@ function NewsFeed() {
   const [news, setNews] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
-  const API = "http://localhost:8001/photonics/advanced";
+  const API = `${BASE}/photonics/advanced`;
   const fetchNews = async (ticker?: string) => { setLoading(true); try { const url = ticker ? `${API}/news?ticker=${ticker}` : `${API}/news`; const res = await fetch(url); const json = await res.json(); setNews(json.news || []); } catch (e) { console.error(e); } setLoading(false); };
   useEffect(() => { fetchNews(); }, []);
   const TICKERS = ["ALL","AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
-  const S = { btn: { padding: "4px 8px", background: "#2a3441", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 10 } };
+  const S = { btn: { padding: "4px 8px", background: "#30363d", color: "#aaa", border: "none", borderRadius: 3, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 10 } };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -3195,7 +3420,7 @@ function NewsFeed() {
       {loading ? <div style={{ color: "#7d8590", padding: 40, textAlign: "center" }}>Fetching news...</div> : (
         news.length === 0 ? <div style={{ color: "#484f58", padding: 20, textAlign: "center" }}>No recent news</div> :
         news.map((item: any, i: number) => (
-          <div key={i} style={{ padding: "12px 16px", borderBottom: "1px solid #e8ecf0" }}>
+          <div key={i} style={{ padding: "12px 16px", borderBottom: "1px solid #30363d" }}>
             <div><span style={{ color: "#58a6ff", fontSize: 11, fontWeight: "bold", marginRight: 8, padding: "1px 6px", background: "#58a6ff15", borderRadius: 3 }}>{item.ticker}</span>
             <a href={item.link} target="_blank" rel="noopener noreferrer" style={{ color: "#e6edf3", fontSize: 13, textDecoration: "none" }}>{item.title}</a></div>
             <div style={{ marginTop: 4 }}><span style={{ color: "#484f58", fontSize: 10 }}>{item.publisher}</span>
@@ -3212,12 +3437,12 @@ function AlertsPanel() {
   const [alerts, setAlerts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ ticker: "", alert_type: "price_below", threshold: "", notes: "" });
-  const API = "http://localhost:8001/photonics/advanced";
+  const API = `${BASE}/photonics/advanced`;
   const fetchAlerts = async () => { setLoading(true); try { const res = await fetch(`${API}/alerts`); const json = await res.json(); setAlerts(json.alerts || []); } catch (e) { console.error(e); } setLoading(false); };
   const addAlert = async () => { if (!form.ticker) return; await fetch(`${API}/alerts`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticker: form.ticker.toUpperCase(), alert_type: form.alert_type, threshold: form.threshold ? parseFloat(form.threshold) : null, notes: form.notes }) }); setForm({ ticker: "", alert_type: "price_below", threshold: "", notes: "" }); fetchAlerts(); };
   const deleteAlert = async (id: number) => { await fetch(`${API}/alerts/${id}`, { method: "DELETE" }); fetchAlerts(); };
   useEffect(() => { fetchAlerts(); }, []);
-  const S: Record<string, any> = { card: { background: "#ffffff", border: "1px solid #e8ecf0", borderRadius: 6, padding: 16, marginBottom: 12 }, input: { padding: "8px 10px", background: "#ffffff", border: "1px solid #2a3441", borderRadius: 4, color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 12 }, btn: { padding: "8px 14px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: "bold" } };
+  const S: Record<string, any> = { card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: 16, marginBottom: 12 }, input: { padding: "8px 10px", background: "#161b22", border: "1px solid #30363d", borderRadius: 4, color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 12 }, btn: { padding: "8px 14px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, fontWeight: "bold" } };
   const typeLabels: Record<string, string> = { price_below: "📉 Price Below", price_above: "📈 Price Above", rsi_oversold: "🔻 RSI Oversold", rsi_overbought: "🔺 RSI Overbought", volume_spike: "📊 Volume Spike", earnings_soon: "📅 Earnings Soon" };
   return (
     <div>
@@ -3237,7 +3462,7 @@ function AlertsPanel() {
         <div style={S.card}>
           <div style={{ color: "#e6edf3", fontWeight: "bold", fontSize: 13, marginBottom: 10 }}>ACTIVE ({alerts.length})</div>
           {alerts.map((a: any) => (
-            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #e8ecf0" }}>
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #30363d" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 18 }}>{a.triggered ? "🔔" : "⏳"}</span>
                 <div>
@@ -3256,6 +3481,178 @@ function AlertsPanel() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function PhotonicsEducation() {
+  const [expanded, setExpanded] = useState<string | null>("what-is-photonics");
+  const [glossarySearch, setGlossarySearch] = useState("");
+
+  const sections = [
+    { id: "what-is-photonics", title: "What is Photonics?", icon: "💡" },
+    { id: "supply-chain", title: "The Photonics Supply Chain", icon: "🔗" },
+    { id: "key-companies", title: "Key Companies & What They Do", icon: "🏢" },
+    { id: "how-to-analyze", title: "How to Analyze Photonics Stocks", icon: "📊" },
+    { id: "glossary", title: "Glossary of Terms", icon: "📖" },
+  ];
+
+  const glossary = [
+    { term: "Transceiver", def: "An optical module that converts electrical signals to light and back. Used in data center networking." },
+    { term: "EML", def: "Electro-absorption Modulated Laser — a type of laser used in high-speed optical communications." },
+    { term: "VCSEL", def: "Vertical-Cavity Surface-Emitting Laser — used in short-range optical links." },
+    { term: "Wafer", def: "A thin slice of semiconductor material used as the base for fabricating electronic/optical components." },
+    { term: "Epitaxy", def: "The process of growing crystal layers on a wafer substrate. Critical for laser and detector manufacturing." },
+    { term: "InP", def: "Indium Phosphide — a semiconductor material ideal for long-wavelength optical devices." },
+    { term: "GaAs", def: "Gallium Arsenide — a semiconductor material used in short-wavelength lasers and solar cells." },
+    { term: "PIC", def: "Photonic Integrated Circuit — multiple optical components integrated on a single chip." },
+    { term: "CPO", def: "Co-Packaged Optics — integrating optics directly with switch ASICs for lower power and latency." },
+    { term: "800G/1.6T", def: "Data rates for next-generation transceivers (800 Gigabit / 1.6 Terabit per second)." },
+    { term: "Coherent", def: "Advanced modulation technique for long-haul optical transmission using phase and amplitude encoding." },
+    { term: "PAM4", def: "Pulse Amplitude Modulation 4-level — a signaling scheme that doubles data rate vs NRZ." },
+    { term: "Hyperscaler", def: "Large cloud providers (AWS, Azure, GCP, Meta) that drive massive demand for optical components." },
+    { term: "DSP", def: "Digital Signal Processor — processes and cleans up optical signals at the receiver end." },
+    { term: "Optical Fiber", def: "Glass or plastic strand that carries light signals over long distances with minimal loss." },
+    { term: "Silicon Photonics", def: "Using standard silicon fabrication to create optical devices, enabling lower cost at scale." },
+  ];
+
+  const companyGuide = [
+    { ticker: "COHR", role: "Vertically integrated: substrates, lasers, transceivers", step: "Multi-Step" },
+    { ticker: "AAOI", role: "Transceiver manufacturer focused on 400G/800G data center optics", step: "Transceiver" },
+    { ticker: "POET", role: "Photonic integration platform (optical interposer technology)", step: "Assembly" },
+    { ticker: "CIEN", role: "Networking equipment with coherent optical technology", step: "Transceiver" },
+    { ticker: "FN", role: "Optical networking equipment for telecom and webscale", step: "Transceiver" },
+    { ticker: "GFS", role: "Foundry services for photonics and semiconductor devices", step: "Wafer Fab" },
+    { ticker: "MRVL", role: "DSP and PHY chips that drive transceivers", step: "Data Center" },
+    { ticker: "AEHR", role: "Test and burn-in equipment for semiconductor devices", step: "Assembly" },
+    { ticker: "GLW", role: "Optical fiber and specialty glass products", step: "Substrate" },
+    { ticker: "LWLG", role: "Electro-optic polymer modulators for next-gen communications", step: "Assembly" },
+  ];
+
+  return (
+    <div>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontSize: 18, color: S.cyan, fontWeight: "bold" }}>PHOTONICS EDUCATION CENTER</div>
+        <div style={{ color: S.muted, fontSize: 12, marginTop: 4 }}>Learn the fundamentals of the photonics supply chain and how to analyze these companies.</div>
+      </div>
+
+      {sections.map(section => (
+        <div key={section.id} style={{ ...S.card, cursor: "pointer", borderLeft: expanded === section.id ? `3px solid ${S.cyan}` : "3px solid transparent", transition: "border-color 0.2s" }}
+          onClick={() => setExpanded(expanded === section.id ? null : section.id)}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ color: S.text, fontWeight: "bold", fontSize: 14 }}>{section.icon} {section.title}</span>
+            <span style={{ color: S.dim, fontSize: 16 }}>{expanded === section.id ? "−" : "+"}</span>
+          </div>
+
+          {expanded === section.id && (
+            <div style={{ marginTop: 16 }} onClick={e => e.stopPropagation()}>
+
+              {section.id === "what-is-photonics" && (
+                <div style={{ color: S.text, fontSize: 13, lineHeight: 1.8 }}>
+                  <p style={{ marginBottom: 12 }}>Photonics is the science and technology of generating, controlling, and detecting photons — particles of light. In the context of investing, photonics refers to the semiconductor supply chain that produces optical components for data centers, telecommunications, and AI infrastructure.</p>
+                  <p style={{ marginBottom: 12 }}>The photonics industry is critical to the AI revolution because <span style={{ color: S.cyan, fontWeight: "bold" }}>optical interconnects (transceivers)</span> are the primary way data moves between GPUs, switches, and servers in hyperscale data centers.</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 16 }}>
+                    {[
+                      { label: "Market Size", value: "$24B+", sub: "Global photonics components", color: S.green },
+                      { label: "Growth Rate", value: "15-20%", sub: "Annual CAGR driven by AI", color: S.cyan },
+                      { label: "Key Driver", value: "AI/ML", sub: "GPU clusters need optical links", color: S.yellow },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: "#0d1117", borderRadius: 6, padding: 14, textAlign: "center", border: "1px solid #30363d" }}>
+                        <div style={{ color: S.muted, fontSize: 10, letterSpacing: 1 }}>{m.label}</div>
+                        <div style={{ color: m.color, fontSize: 22, fontWeight: "bold", margin: "4px 0" }}>{m.value}</div>
+                        <div style={{ color: S.dim, fontSize: 11 }}>{m.sub}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {section.id === "supply-chain" && (
+                <div>
+                  <p style={{ color: S.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>The photonics supply chain transforms raw materials into the optical transceivers that power data centers. Each step adds value and complexity.</p>
+                  <div style={{ display: "flex", gap: 4, overflowX: "auto", padding: "12px 0" }}>
+                    {Object.entries(STEP_NAMES).map(([step, name], i) => (
+                      <div key={step} style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                        <div style={{ background: "#0d1117", border: `1px solid ${S.cyan}40`, borderRadius: 8, padding: "14px 16px", minWidth: 120, textAlign: "center" }}>
+                          <div style={{ fontSize: 22, marginBottom: 4 }}>{["⛏️","💎","🔬","🏭","✂️","🔧","📡","🖥️"][i]}</div>
+                          <div style={{ color: S.text, fontWeight: "bold", fontSize: 12 }}>{name}</div>
+                          <div style={{ color: S.dim, fontSize: 10, marginTop: 4 }}>Step {Number(step) + 1}</div>
+                        </div>
+                        {i < 7 && <div style={{ color: S.cyan, fontSize: 18, padding: "0 6px", flexShrink: 0 }}>→</div>}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
+                    {[
+                      { step: "Mining → Substrate", desc: "Raw materials (Indium, Gallium, Phosphide) are refined into crystalline wafers that serve as the foundation." },
+                      { step: "Epitaxy → Wafer Fab", desc: "Atomic-precision crystal layers are grown on substrates, then processed into functional chip patterns." },
+                      { step: "Dicing → Assembly", desc: "Wafers are cut into individual chips (dies), then packaged with lenses, fibers, and electronics." },
+                      { step: "Transceiver → Data Center", desc: "Completed optical modules are plugged into switches and servers, enabling high-speed data transfer." },
+                    ].map(s => (
+                      <div key={s.step} style={{ background: "#0d1117", borderRadius: 6, padding: 12, border: "1px solid #30363d" }}>
+                        <div style={{ color: S.cyan, fontWeight: "bold", fontSize: 12, marginBottom: 4 }}>{s.step}</div>
+                        <div style={{ color: S.muted, fontSize: 12, lineHeight: 1.5 }}>{s.desc}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {section.id === "key-companies" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {companyGuide.map(c => (
+                    <div key={c.ticker} style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ color: S.green, fontWeight: "bold", fontSize: 15 }}>{c.ticker}</span>
+                        <span style={{ color: S.dim, fontSize: 10, background: "#21262d", padding: "2px 8px", borderRadius: 3, letterSpacing: 0.5 }}>{c.step}</span>
+                      </div>
+                      <div style={{ color: S.muted, fontSize: 12, lineHeight: 1.5 }}>{c.role}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {section.id === "how-to-analyze" && (
+                <div>
+                  <p style={{ color: S.muted, fontSize: 13, marginBottom: 16, lineHeight: 1.6 }}>Key metrics and frameworks for evaluating photonics companies:</p>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {[
+                      { metric: "Revenue Growth Rate", target: "20%+ YoY", why: "Photonics companies in growth mode should show strong top-line acceleration", color: S.green },
+                      { metric: "Gross Margin", target: "40%+", why: "Semiconductor companies need healthy margins to fund R&D and expansion", color: S.cyan },
+                      { metric: "Design Wins", target: "Track new wins", why: "New customer wins, especially with hyperscalers (MSFT, GOOGL, AMZN, META)", color: S.blue },
+                      { metric: "Capacity Utilization", target: "80%+", why: "Wafer fab utilization rates signal demand strength and pricing power", color: S.yellow },
+                      { metric: "Book-to-Bill Ratio", target: "> 1.0x", why: "Above 1.0 indicates new orders exceed shipments — growing backlog", color: S.green },
+                      { metric: "ASP Trends", target: "Rising", why: "Average selling price increases indicate pricing power and product mix improvement", color: S.cyan },
+                    ].map(m => (
+                      <div key={m.metric} style={{ background: "#0d1117", borderRadius: 6, padding: 12, border: "1px solid #30363d", borderLeft: `3px solid ${m.color}` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ color: S.text, fontWeight: "bold", fontSize: 13 }}>{m.metric}</span>
+                          <span style={{ color: m.color, fontWeight: "bold", fontSize: 12 }}>{m.target}</span>
+                        </div>
+                        <div style={{ color: S.muted, fontSize: 12, lineHeight: 1.5 }}>{m.why}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {section.id === "glossary" && (
+                <div>
+                  <input value={glossarySearch} onChange={e => setGlossarySearch(e.target.value)} placeholder="🔍 Search terms..." style={{ ...S.input, marginBottom: 12, width: 300 }} />
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    {glossary.filter(g => !glossarySearch || g.term.toLowerCase().includes(glossarySearch.toLowerCase()) || g.def.toLowerCase().includes(glossarySearch.toLowerCase())).map(g => (
+                      <div key={g.term} style={{ background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: 12 }}>
+                        <div style={{ color: S.cyan, fontWeight: "bold", fontSize: 13, marginBottom: 4 }}>{g.term}</div>
+                        <div style={{ color: S.muted, fontSize: 12, lineHeight: 1.5 }}>{g.def}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

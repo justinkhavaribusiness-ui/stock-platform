@@ -321,3 +321,33 @@ async def get_target_gaps():
         "existing_with_upside": [o for o in opportunities if o["owned"] and o["gap_pct"] > 5],
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.post("/sync-fidelity")
+async def sync_fidelity_positions():
+    """Sync photonics positions from Fidelity portfolio data."""
+    import json as _json
+    pos_cache = rdb.get("cache:fidelity:positions")
+    if not pos_cache:
+        return {"synced": 0, "error": "No Fidelity data cached. Load Fidelity positions first."}
+
+    data = _json.loads(pos_cache)
+    positions = data.get("positions", [])
+
+    synced = 0
+    for p in positions:
+        sym = p.get("symbol", "").upper()
+        if sym in PHOTONICS_UNIVERSE and not p.get("is_option") and not p.get("is_cash") and p.get("quantity"):
+            # Save/update in photonics portfolio
+            pos_data = {
+                "ticker": sym,
+                "shares": p["quantity"],
+                "avg_cost": p.get("avg_cost") or 0,
+                "account": p.get("account", ""),
+                "notes": "Synced from Fidelity",
+                "target_price": 0,
+            }
+            rdb.hset("photonics:portfolio", sym, _json.dumps(pos_data))
+            synced += 1
+
+    return {"synced": synced, "message": f"Synced {synced} photonics positions from Fidelity"}

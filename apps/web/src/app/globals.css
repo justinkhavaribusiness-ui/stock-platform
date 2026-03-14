@@ -14,7 +14,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
+    --background: #06080d;
     --foreground: #ededed;
   }
 }
@@ -22,5 +22,263 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: 'Inter', 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
+
+/* ── Glassmorphism Design System ────────────────────── */
+
+/* Deep gradient background for dark mode */
+.glass-bg-dark {
+  background: linear-gradient(135deg, #06080d 0%, #0a0f1a 30%, #0d1220 60%, #080c14 100%);
+  min-height: 100vh;
+}
+.glass-bg-light {
+  background: linear-gradient(135deg, #f0f4f8 0%, #e8eef5 30%, #f5f7fa 60%, #edf1f7 100%);
+  min-height: 100vh;
+}
+
+/* Glass card variants */
+.glass-card {
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  transition: all 0.2s ease;
+}
+.glass-card:hover {
+  transform: translateY(-1px);
+}
+
+.glass-card-dark {
+  background: rgba(15, 20, 35, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.glass-card-light {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+/* Glass header/nav */
+.glass-header-dark {
+  background: rgba(6, 8, 13, 0.75);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+}
+.glass-header-light {
+  background: rgba(255, 255, 255, 0.8);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.04);
+}
+
+/* Gradient accent buttons */
+.btn-gradient {
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+  color: white;
+  font-weight: 600;
+  border: none;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+}
+.btn-gradient:hover {
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Glow effects for key data */
+.glow-green { text-shadow: 0 0 20px rgba(52, 211, 153, 0.4); }
+.glow-red { text-shadow: 0 0 20px rgba(248, 113, 113, 0.4); }
+.glow-blue { text-shadow: 0 0 20px rgba(96, 165, 250, 0.4); }
+.glow-purple { text-shadow: 0 0 20px rgba(167, 139, 250, 0.4); }
+
+/* Gradient text */
+.text-gradient {
+  background: linear-gradient(135deg, #818cf8, #c084fc, #f472b6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-green {
+  background: linear-gradient(135deg, #34d399, #6ee7b7);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.text-gradient-warm {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b, #f97316);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Sidebar navigation */
+.nav-sidebar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nav-sidebar::-webkit-scrollbar { display: none; }
+
+.nav-category-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 10px 14px 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  margin: 1px 6px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-item:hover {
+  transform: translateX(2px);
+}
+.nav-item-active-dark {
+  background: rgba(99, 102, 241, 0.15);
+  color: #a5b4fc;
+  box-shadow: inset 3px 0 0 #6366f1;
+}
+.nav-item-active-light {
+  background: rgba(99, 102, 241, 0.1);
+  color: #4f46e5;
+  box-shadow: inset 3px 0 0 #6366f1;
+}
+
+/* Ticker tape redesign */
+.ticker-tape {
+  backdrop-filter: blur(12px);
+}
+.ticker-tape-dark {
+  background: rgba(10, 15, 26, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.ticker-tape-light {
+  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+/* Status pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Smooth scrollbar */
+* { scrollbar-width: thin; scrollbar-color: rgba(100,100,140,0.25) transparent; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(100,100,140,0.25); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(100,100,140,0.4); }
+
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ── Animations ──────────────────────────────────── */
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeOut { to { opacity: 0; transform: translateY(8px); } }
+@keyframes slideInLeft { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+@keyframes pulse-glow { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+@keyframes ticker { 0% { transform: translateX(0); } 100% { transform: translateX(-33.333%); } }
+@keyframes skeletonPulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+@keyframes priceGlow { 0% { text-shadow: 0 0 16px rgba(52,211,153,0.6); } 100% { text-shadow: none; } }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+.animate-fadeIn { animation: fadeIn 0.35s ease-out; }
+.animate-slideInLeft { animation: slideInLeft 0.3s ease-out; }
+.animate-ticker { animation: ticker 45s linear infinite; }
+.animate-ticker:hover { animation-play-state: paused; }
+.skeleton-pulse { animation: skeletonPulse 1.5s ease-in-out infinite; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+/* ── Loading Screen ─────────────────────────────── */
+@keyframes scanline {
+  0% { top: -2px; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+@keyframes bootFadeOut {
+  to { opacity: 0; transform: scale(1.02); pointer-events: none; }
+}
+@keyframes tabEnter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes progressGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(99,102,241,0.4); }
+  50% { box-shadow: 0 0 20px rgba(139,92,246,0.6); }
+}
+@keyframes terminalBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes gridPulse {
+  0%, 100% { opacity: 0.03; }
+  50% { opacity: 0.06; }
+}
+
+.animate-tabEnter { animation: tabEnter 0.2s ease-out; }
+.animate-bootFadeOut { animation: bootFadeOut 0.5s ease-in forwards; }
+
+.boot-scanline {
+  position: absolute;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(99,102,241,0.5), rgba(139,92,246,0.3), transparent);
+  animation: scanline 3s linear infinite;
+  z-index: 1;
+}
+
+.boot-grid {
+  background-image:
+    linear-gradient(rgba(99,102,241,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99,102,241,0.05) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: gridPulse 4s ease-in-out infinite;
+}
+
+.progress-bar-glow {
+  animation: progressGlow 2s ease-in-out infinite;
+}
+
+.terminal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 14px;
+  background: rgba(99,102,241,0.7);
+  animation: terminalBlink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+/* ── Mobile Responsive ───────────────────────────── */
+@media (max-width: 640px) {
+  .mobile-stack { flex-direction: column !important; }
+  table { font-size: 11px; }
+}
+
+/* ── Selection color ─────────────────────────────── */
+::selection { background: rgba(99, 102, 241, 0.3); color: inherit; }

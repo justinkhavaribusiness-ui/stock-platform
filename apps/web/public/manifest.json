@@ -1,0 +1,42 @@
+{
+  "name": "Stock Terminal v5.2",
+  "short_name": "StockTerm",
+  "description": "Professional stock trading terminal with AI-powered analytics",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#f59e0b",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["finance", "productivity"],
+  "shortcuts": [
+    {
+      "name": "AI Analysis",
+      "url": "/?tab=ai",
+      "description": "Open AI stock analysis"
+    },
+    {
+      "name": "Charts",
+      "url": "/?tab=charts",
+      "description": "Open charts"
+    },
+    {
+      "name": "Portfolio",
+      "url": "/?tab=portfolio",
+      "description": "View portfolio"
+    }
+  ]
+}
