@@ -72,9 +72,11 @@ app.include_router(photonics_router)
 app.include_router(photonics_technicals_router)
 app.include_router(photonics_portfolio_router)
 app.include_router(photonics_advanced_router)
+_cors_env = os.getenv("CORS_ORIGINS", "")
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"],
+    allow_origins=_cors_origins, allow_methods=["*"],
     allow_headers=["*"], allow_credentials=True,
 )
 
