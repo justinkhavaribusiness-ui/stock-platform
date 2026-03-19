@@ -2,12 +2,30 @@ services:
   - type: web
     name: stock-platform-api
     runtime: python
-    rootDir: api
+    rootDir: services/api
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: RH_EMAIL
+        sync: false
+      - key: RH_PASSWORD
+        sync: false
+      - key: FINNHUB_API_KEY
+        sync: false
+      - key: ALPHA_VANTAGE_KEY
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: stock-platform-redis
+          type: redis
+          property: connectionString
       - key: PYTHONUNBUFFERED
         value: "1"
     plan: free
+
+  - type: redis
+    name: stock-platform-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru

@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "https://stock-platform-8o8c.onrender.com";
 const API = `${BASE}/photonics`;
 
 const PHOTONICS_SUBTABS = ["DASHBOARD", "WATCHLIST", "SUPPLY CHAIN", "RESEARCH", "AI ANALYST", "EARNINGS", "THESIS", "CATALYSTS", "TECHNICALS", "PORTFOLIO", "RS", "RISK", "NEWS", "ALERTS", "EDUCATION", "GRAPH","MODELS","SIGNALS","SIMULATE","PIPELINE","CONSTRUCT","EXPORT","COHR-MODEL","FANG","OSCR","SECTORS"];

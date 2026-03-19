@@ -30,6 +30,8 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: https://stock-platform-8o8c.onrender.com
 
       - uses: actions/upload-pages-artifact@v3
         with:

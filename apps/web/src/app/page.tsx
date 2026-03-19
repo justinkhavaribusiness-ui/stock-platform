@@ -152,7 +152,7 @@ import PhotonicsCenter from "./PhotonicsCenter";
 
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import OptionsJournal from "./OptionsJournal";
-const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const BASE = process.env.NEXT_PUBLIC_API_URL || "https://stock-platform-8o8c.onrender.com";
 
 // ── Types ──────────────────────────────────────────────────────────────
 type MacroItem  = { symbol: string; label: string; price: number | null; change: number | null; change_pct: number | null };
@@ -420,7 +420,7 @@ function CryptoPanel() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [customSymbols, setCustomSymbols] = useState("");
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://stock-platform-8o8c.onrender.com";
 
   const fetchPrices = (syms?: string) => {
     setLoading(true);
