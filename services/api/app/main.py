@@ -75,7 +75,7 @@ app.include_router(photonics_advanced_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_methods=["*"],
-    allow_headers=["*"], allow_credentials=True,
+    allow_headers=["*"], allow_credentials=False,
 )
 
 rdb = redis.from_url(REDIS_URL, decode_responses=True)
