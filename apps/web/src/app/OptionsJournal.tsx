@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, LineChart, Line, AreaChart, Area, Legend,
 } from "recharts";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://stock-platform-8o8c.onrender.com";
 
 interface OpenPosition {
   symbol: string; ticker: string; strike: number; expiration: string;
