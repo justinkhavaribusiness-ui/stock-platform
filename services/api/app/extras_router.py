@@ -1233,3 +1233,339 @@ async def add_dividend(entry: DividendEntry):
 @router.delete("/dividends/{div_id}")
 async def delete_dividend(div_id: str):
     return _list_delete(DIVIDENDS_KEY, "id", div_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  WATCHLIST PRICE ALERTS
+# ═══════════════════════════════════════════════════════════════════════
+PRICE_ALERTS_KEY = "price-alerts:list"
+
+class PriceAlertCreate(BaseModel):
+    ticker: str
+    condition: str = "below"  # "below" or "above"
+    target: float = 0
+    notes: str = ""
+
+@router.get("/price-alerts")
+async def get_price_alerts():
+    """Get all price alerts with current prices and triggered status."""
+    alerts = _list_get(PRICE_ALERTS_KEY)
+    try:
+        import yfinance as yf
+        tickers = list({a["ticker"] for a in alerts})
+        if tickers:
+            data = yf.download(tickers, period="1d", progress=False, auto_adjust=True)
+            for a in alerts:
+                try:
+                    if len(tickers) == 1:
+                        price = float(data["Close"].iloc[-1])
+                    else:
+                        price = float(data["Close"][a["ticker"]].iloc[-1])
+                    a["current_price"] = round(price, 2)
+                    if a["condition"] == "below":
+                        a["triggered"] = price <= a["target"]
+                        a["distance_pct"] = round((price - a["target"]) / price * 100, 1)
+                    else:
+                        a["triggered"] = price >= a["target"]
+                        a["distance_pct"] = round((a["target"] - price) / price * 100, 1)
+                except Exception:
+                    a["current_price"] = None
+                    a["triggered"] = False
+    except Exception:
+        pass
+    triggered = [a for a in alerts if a.get("triggered")]
+    return {"alerts": alerts, "triggered_count": len(triggered)}
+
+@router.post("/price-alerts")
+async def create_price_alert(alert: PriceAlertCreate):
+    entry = {
+        "id": _make_id(),
+        "ticker": alert.ticker.upper(),
+        "condition": alert.condition,
+        "target": alert.target,
+        "notes": alert.notes,
+        "created": _now(),
+        "triggered": False,
+    }
+    return _list_add(PRICE_ALERTS_KEY, entry)
+
+@router.delete("/price-alerts/{alert_id}")
+async def delete_price_alert(alert_id: str):
+    return _list_delete(PRICE_ALERTS_KEY, "id", alert_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  PORTFOLIO CORRELATION MATRIX
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/portfolio/correlations")
+async def portfolio_correlations():
+    """Calculate correlation matrix for portfolio holdings."""
+    import pathlib, csv as csvmod
+    try:
+        import yfinance as yf
+        import numpy as np
+    except ImportError:
+        return {"error": "yfinance or numpy not available"}
+
+    # Load tickers from Fidelity
+    csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+    if not csv_path.exists():
+        return {"tickers": [], "matrix": [], "clusters": []}
+
+    tickers = []
+    with open(csv_path) as f:
+        reader = csvmod.DictReader(f)
+        for row in reader:
+            sym = (row.get("Symbol") or "").strip()
+            if sym and "SPAXX" not in sym and sym != "Cash" and not sym.startswith("-"):
+                tickers.append(sym)
+
+    tickers = tickers[:20]  # limit
+    if len(tickers) < 2:
+        return {"tickers": tickers, "matrix": [], "clusters": []}
+
+    # Download 3-month returns
+    try:
+        data = yf.download(tickers, period="3mo", progress=False, auto_adjust=True)
+        if data.empty:
+            return {"tickers": tickers, "matrix": [], "clusters": []}
+        returns = data["Close"].pct_change().dropna()
+        corr = returns.corr()
+    except Exception as e:
+        return {"tickers": tickers, "matrix": [], "error": str(e)}
+
+    # Build matrix
+    matrix = []
+    for i, t1 in enumerate(tickers):
+        row = []
+        for j, t2 in enumerate(tickers):
+            try:
+                val = round(float(corr.loc[t1, t2]), 3)
+            except Exception:
+                val = 0
+            row.append(val)
+        matrix.append(row)
+
+    # Find clusters (highly correlated groups > 0.7)
+    clusters = []
+    seen = set()
+    for i, t1 in enumerate(tickers):
+        if t1 in seen:
+            continue
+        cluster = [t1]
+        for j, t2 in enumerate(tickers):
+            if i != j and t2 not in seen:
+                try:
+                    if abs(float(corr.loc[t1, t2])) > 0.7:
+                        cluster.append(t2)
+                except Exception:
+                    pass
+        if len(cluster) > 1:
+            clusters.append(cluster)
+            seen.update(cluster)
+
+    return {"tickers": tickers, "matrix": matrix, "clusters": clusters}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  EARNINGS CALENDAR WITH AI PREP
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/earnings/ai-prep")
+async def earnings_ai_prep():
+    """Get upcoming earnings for portfolio with AI prep notes."""
+    import pathlib, csv as csvmod
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {"earnings": []}
+
+    # Load tickers
+    csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+    tickers = []
+    if csv_path.exists():
+        with open(csv_path) as f:
+            reader = csvmod.DictReader(f)
+            for row in reader:
+                sym = (row.get("Symbol") or "").strip()
+                if sym and "SPAXX" not in sym and sym != "Cash" and not sym.startswith("-"):
+                    tickers.append(sym)
+
+    earnings = []
+    for tk in tickers[:20]:
+        try:
+            info = yf.Ticker(tk).info or {}
+            cal = yf.Ticker(tk).calendar
+            ear_date = None
+            if isinstance(cal, dict):
+                ear_date = cal.get("Earnings Date")
+                if isinstance(ear_date, list) and ear_date:
+                    ear_date = str(ear_date[0])
+                elif ear_date:
+                    ear_date = str(ear_date)
+
+            if not ear_date:
+                continue
+
+            earnings.append({
+                "ticker": tk,
+                "earnings_date": ear_date,
+                "price": round(info.get("currentPrice") or info.get("regularMarketPrice") or 0, 2),
+                "pe": info.get("trailingPE"),
+                "forward_pe": info.get("forwardPE"),
+                "eps_estimate": info.get("epsCurrentYear"),
+                "revenue_estimate": info.get("revenueEstimate", {}).get("avg") if isinstance(info.get("revenueEstimate"), dict) else None,
+                "recommendation": info.get("recommendationKey", ""),
+                "analysts": info.get("numberOfAnalystOpinions", 0),
+            })
+        except Exception:
+            continue
+
+    # Sort by earnings date
+    earnings.sort(key=lambda x: x.get("earnings_date", "9999"))
+
+    # AI prep for next 3 earnings if Claude available
+    try:
+        import anthropic
+        ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+        if earnings[:3] and ANTHROPIC_KEY:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+            tickers_info = "\n".join([f"{e['ticker']}: P/E {e.get('pe','N/A')}, Fwd P/E {e.get('forward_pe','N/A')}, EPS Est {e.get('eps_estimate','N/A')}, Consensus: {e.get('recommendation','N/A')}, Date: {e['earnings_date']}" for e in earnings[:3]])
+
+            msg = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=1500,
+                messages=[{"role": "user", "content": f"""For each upcoming earnings report below, provide brief prep notes as JSON array:
+- "ticker": string
+- "what_to_watch": 1 sentence on what matters most
+- "expected_move": estimated % move (based on historical)
+- "risk": main risk going in
+- "action": what a covered call trader should do (hold through, close CC before, sell puts after, etc.)
+
+{tickers_info}
+
+Return ONLY valid JSON array."""}],
+            )
+            text = msg.content[0].text.strip()
+            if text.startswith("["):
+                ai_prep = json.loads(text)
+                # Merge AI prep into earnings
+                prep_map = {p["ticker"]: p for p in ai_prep}
+                for e in earnings:
+                    if e["ticker"] in prep_map:
+                        e["ai_prep"] = prep_map[e["ticker"]]
+    except Exception:
+        pass
+
+    return {"earnings": earnings, "total": len(earnings)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  MULTI-ACCOUNT DASHBOARD
+# ═══════════════════════════════════════════════════════════════════════
+IBKR_KEY = "accounts:ibkr"
+
+class IBKRPosition(BaseModel):
+    ticker: str
+    shares: float
+    avg_cost: float
+    currency: str = "USD"
+    account: str = "IBKR"
+
+@router.get("/multi-account")
+async def multi_account():
+    """Combine Fidelity + IBKR into one view."""
+    import pathlib, csv as csvmod
+
+    accounts = []
+
+    # Fidelity
+    csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+    fidelity_positions = []
+    fidelity_total = 0
+    if csv_path.exists():
+        with open(csv_path) as f:
+            reader = csvmod.DictReader(f)
+            for row in reader:
+                sym = (row.get("Symbol") or "").strip()
+                if not sym or "SPAXX" in sym or sym == "Cash":
+                    continue
+                try:
+                    val = float((row.get("Current Value") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                    qty = float((row.get("Quantity") or "0").replace(",", ""))
+                    cost = float((row.get("Cost Basis Total") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                    pnl = val - cost
+                except (ValueError, TypeError):
+                    continue
+                fidelity_total += val
+                fidelity_positions.append({
+                    "ticker": sym, "shares": qty, "value": round(val, 2),
+                    "cost": round(cost, 2), "pnl": round(pnl, 2),
+                    "pnl_pct": round(pnl / cost * 100, 1) if cost else 0,
+                })
+
+    accounts.append({
+        "name": "Fidelity",
+        "type": "Individual",
+        "total_value": round(fidelity_total, 2),
+        "positions": fidelity_positions,
+        "position_count": len(fidelity_positions),
+    })
+
+    # IBKR (from Redis)
+    ibkr_positions = _list_get(IBKR_KEY)
+    ibkr_total = 0
+    try:
+        import yfinance as yf
+        for p in ibkr_positions:
+            try:
+                t = yf.Ticker(p["ticker"])
+                hist = t.history(period="1d")
+                if not hist.empty:
+                    price = float(hist["Close"].iloc[-1])
+                    val = price * p["shares"]
+                    cost = p["avg_cost"] * p["shares"]
+                    p["current_price"] = round(price, 2)
+                    p["value"] = round(val, 2)
+                    p["pnl"] = round(val - cost, 2)
+                    p["pnl_pct"] = round((val - cost) / cost * 100, 1) if cost else 0
+                    ibkr_total += val
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    if ibkr_positions:
+        accounts.append({
+            "name": "Interactive Brokers",
+            "type": "Individual",
+            "total_value": round(ibkr_total, 2),
+            "positions": ibkr_positions,
+            "position_count": len(ibkr_positions),
+        })
+
+    grand_total = sum(a["total_value"] for a in accounts)
+    return {
+        "accounts": accounts,
+        "grand_total": round(grand_total, 2),
+        "account_count": len(accounts),
+    }
+
+@router.post("/multi-account/ibkr")
+async def add_ibkr_position(pos: IBKRPosition):
+    entry = {
+        "id": _make_id(),
+        "ticker": pos.ticker.upper(),
+        "shares": pos.shares,
+        "avg_cost": pos.avg_cost,
+        "currency": pos.currency,
+        "account": pos.account,
+        "created": _now(),
+    }
+    return _list_add(IBKR_KEY, entry)
+
+@router.delete("/multi-account/ibkr/{pos_id}")
+async def delete_ibkr_position(pos_id: str):
+    return _list_delete(IBKR_KEY, "id", pos_id)

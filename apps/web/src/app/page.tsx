@@ -24,6 +24,10 @@ import FidelitySync from "./FidelitySync";
 import EquityCurve from "./EquityCurve";
 import DividendTracker from "./DividendTracker";
 import TradeReplay from "./TradeReplay";
+import PriceAlerts from "./PriceAlerts";
+import CorrelationMatrix from "./CorrelationMatrix";
+import EarningsPrep from "./EarningsPrep";
+import MultiAccount from "./MultiAccount";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1800,6 +1804,10 @@ function CryptoPanel() {
     { id:"eqcurve2",    label:"Eq Curve",    icon:"📉" },
     { id:"dividends",   label:"Divs",        icon:"💎" },
     { id:"tradereplay", label:"Replay",      icon:"🎬" },
+    { id:"pricealerts", label:"P Alerts",    icon:"🔔" },
+    { id:"corrmatrix",  label:"Corr",        icon:"🔗" },
+    { id:"earnprep",    label:"Earn Prep",   icon:"📊" },
+    { id:"multiacct",   label:"Accounts",    icon:"🏦" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
@@ -1807,11 +1815,11 @@ function CryptoPanel() {
     {cat:"Charts", items:tabs.filter(t=>["charts","robinhood","quotes","watchlist","heatmap"].includes(t.id))},
     {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment"].includes(t.id))},
     {cat:"Photonics", items:tabs.filter(t=>["photonics","screener","analytics"].includes(t.id))},
-    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync"].includes(t.id))},
+    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt","tradereplay"].includes(t.id))},
     {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis","optchain","ccincome"].includes(t.id))},
     {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor"].includes(t.id))},
-    {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality"].includes(t.id))},
+    {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality","pricealerts","earnprep"].includes(t.id))},
     {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates"].includes(t.id))},
   ];
 
@@ -7522,6 +7530,18 @@ function CryptoPanel() {
 
         {/* ── TRADE REPLAY ───────────────────────────────── */}
         {tab==="tradereplay" && <TradeReplay dark={dark} BASE={BASE} />}
+
+        {/* ── PRICE ALERTS ───────────────────────────────── */}
+        {tab==="pricealerts" && <PriceAlerts dark={dark} BASE={BASE} />}
+
+        {/* ── CORRELATION MATRIX ─────────────────────────── */}
+        {tab==="corrmatrix" && <CorrelationMatrix dark={dark} BASE={BASE} />}
+
+        {/* ── EARNINGS PREP ──────────────────────────────── */}
+        {tab==="earnprep" && <EarningsPrep dark={dark} BASE={BASE} />}
+
+        {/* ── MULTI-ACCOUNT ──────────────────────────────── */}
+        {tab==="multiacct" && <MultiAccount dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (
