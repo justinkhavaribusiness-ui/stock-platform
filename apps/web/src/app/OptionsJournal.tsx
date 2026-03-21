@@ -372,8 +372,17 @@ export default function OptionsJournal() {
       .filter(t => filterTicker === "ALL" || t.ticker === filterTicker)
       .filter(t => filterStrategy === "ALL" || t.strategy === filterStrategy)
       .sort((a, b) => {
-        const va = (a as any)[sortField] ?? "";
-        const vb = (b as any)[sortField] ?? "";
+        let va = (a as any)[sortField] ?? "";
+        let vb = (b as any)[sortField] ?? "";
+        // Parse dates for proper sorting (MM/DD/YYYY or YYYY-MM-DD)
+        if (sortField.includes("date") && typeof va === "string") {
+          const parseDate = (d: string) => {
+            if (!d) return 0;
+            if (d.includes("/")) { const [m, day, y] = d.split("/"); return new Date(`${y}-${m}-${day}`).getTime() || 0; }
+            return new Date(d).getTime() || 0;
+          };
+          va = parseDate(va as string); vb = parseDate(vb as string);
+        }
         return sortDir === "asc" ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
       });
   }, [data, filterTicker, filterStrategy, sortField, sortDir]);
