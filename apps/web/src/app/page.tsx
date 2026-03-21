@@ -615,9 +615,11 @@ function CryptoPanel() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-  const isOpen = hour >= 9 && hour < 16;
-  const statusLabel = hour >= 4 && hour < 9.5 ? "Pre-Market" : isOpen ? "Market Open" : hour >= 16 && hour < 20 ? "After Hours" : "Closed";
-  const statusColor = isOpen ? "#22c55e" : hour >= 4 && hour < 9.5 || hour >= 16 && hour < 20 ? "#eab308" : "#71717a";
+  const dayOfWeek = new Date().getDay();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const isOpen = !isWeekend && hour >= 9 && hour < 16;
+  const statusLabel = isWeekend ? "Closed" : hour >= 4 && hour < 9.5 ? "Pre-Market" : isOpen ? "Market Open" : hour >= 16 && hour < 20 ? "After Hours" : "Closed";
+  const statusColor = isOpen ? "#22c55e" : !isWeekend && (hour >= 4 && hour < 9.5 || hour >= 16 && hour < 20) ? "#eab308" : "#71717a";
 
   return (
     <div className="flex items-center justify-between mb-1">
