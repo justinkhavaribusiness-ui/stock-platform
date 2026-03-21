@@ -821,6 +821,98 @@ export default function OptionsJournal() {
             </div>
           </div>
 
+          {/* ═══ STRATEGY SEPARATION: Premium Selling vs Directional ═══ */}
+          {(() => {
+            const sold = data.closed_trades.filter((t: any) => t.is_short);
+            const bought = data.closed_trades.filter((t: any) => !t.is_short);
+            const soldPnl = sold.reduce((s: number, t: any) => s + t.pnl, 0);
+            const boughtPnl = bought.reduce((s: number, t: any) => s + t.pnl, 0);
+            const soldWins = sold.filter((t: any) => t.pnl > 0).length;
+            const boughtWins = bought.filter((t: any) => t.pnl > 0).length;
+            const soldWR = sold.length > 0 ? Math.round(soldWins / sold.length * 100) : 0;
+            const boughtWR = bought.length > 0 ? Math.round(boughtWins / bought.length * 100) : 0;
+
+            // Open positions split
+            const openSold = (data.open_positions || []).filter((p: any) => p.is_short);
+            const openBought = (data.open_positions || []).filter((p: any) => !p.is_short);
+
+            return (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                {/* Premium Selling */}
+                <div style={{ ...S.card, padding: 16, borderLeft: `3px solid ${S.green}` }}>
+                  <div style={{ color: S.green, fontWeight: "bold", fontSize: 13, marginBottom: 12, fontFamily: S.font, textTransform: "uppercase", letterSpacing: 1 }}>
+                    💵 Premium Selling (Income)
+                  </div>
+                  <div style={{ color: S.dim, fontSize: 11, marginBottom: 12, fontFamily: S.font }}>
+                    Covered calls & cash-secured puts — you sell the option, collect premium, shares/cash as collateral
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Total P&L</div><div style={{ color: pnlColor(soldPnl), fontWeight: "bold", fontSize: 22, ...S.mono }}>${soldPnl.toFixed(0)}</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Win Rate</div><div style={{ color: soldWR >= 60 ? S.green : S.red, fontWeight: "bold", fontSize: 22, ...S.mono }}>{soldWR}%</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Trades</div><div style={{ color: S.text, fontWeight: "bold", fontSize: 16, ...S.mono }}>{sold.length} closed</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Open</div><div style={{ color: S.cyan, fontWeight: "bold", fontSize: 16, ...S.mono }}>{openSold.length} active</div></div>
+                  </div>
+                  {openSold.length > 0 && (
+                    <div style={{ marginTop: 12, borderTop: `1px solid ${S.border || "#e8ecf0"}`, paddingTop: 8 }}>
+                      <div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>Active CCs/CSPs</div>
+                      {openSold.map((p: any, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: S.text, fontFamily: "'JetBrains Mono', monospace", marginBottom: 2 }}>
+                          {p.ticker} {p.call_put} ${p.strike} exp {p.expiration} · {p.contracts}x
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {sold.length > 0 && (
+                    <div style={{ marginTop: 12, borderTop: `1px solid ${S.border || "#e8ecf0"}`, paddingTop: 8 }}>
+                      <div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>Top Earners</div>
+                      {[...sold].sort((a: any, b: any) => b.pnl - a.pnl).slice(0, 3).map((t: any, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: S.green, fontFamily: "'JetBrains Mono', monospace", marginBottom: 2 }}>
+                          {t.ticker} {t.call_put} ${t.strike}: +${t.pnl.toFixed(0)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Directional Trades */}
+                <div style={{ ...S.card, padding: 16, borderLeft: `3px solid ${S.blue}` }}>
+                  <div style={{ color: S.blue, fontWeight: "bold", fontSize: 13, marginBottom: 12, fontFamily: S.font, textTransform: "uppercase", letterSpacing: 1 }}>
+                    🎯 Directional Trades (Speculation)
+                  </div>
+                  <div style={{ color: S.dim, fontSize: 11, marginBottom: 12, fontFamily: S.font }}>
+                    Long calls & puts — you buy the option, pay premium, betting on price movement
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Total P&L</div><div style={{ color: pnlColor(boughtPnl), fontWeight: "bold", fontSize: 22, ...S.mono }}>${boughtPnl.toFixed(0)}</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Win Rate</div><div style={{ color: boughtWR >= 50 ? S.green : S.red, fontWeight: "bold", fontSize: 22, ...S.mono }}>{boughtWR}%</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Trades</div><div style={{ color: S.text, fontWeight: "bold", fontSize: 16, ...S.mono }}>{bought.length} closed</div></div>
+                    <div><div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase" }}>Open</div><div style={{ color: S.cyan, fontWeight: "bold", fontSize: 16, ...S.mono }}>{openBought.length} active</div></div>
+                  </div>
+                  {openBought.length > 0 && (
+                    <div style={{ marginTop: 12, borderTop: `1px solid ${S.border || "#e8ecf0"}`, paddingTop: 8 }}>
+                      <div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>Open Positions</div>
+                      {openBought.map((p: any, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: S.text, fontFamily: "'JetBrains Mono', monospace", marginBottom: 2 }}>
+                          {p.ticker} {p.call_put} ${p.strike} exp {p.expiration} · {p.contracts}x
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {bought.length > 0 && (
+                    <div style={{ marginTop: 12, borderTop: `1px solid ${S.border || "#e8ecf0"}`, paddingTop: 8 }}>
+                      <div style={{ color: S.muted, fontSize: 10, textTransform: "uppercase", marginBottom: 4 }}>Best Trades</div>
+                      {[...bought].sort((a: any, b: any) => b.pnl - a.pnl).slice(0, 3).map((t: any, i: number) => (
+                        <div key={i} style={{ fontSize: 12, color: t.pnl >= 0 ? S.green : S.red, fontFamily: "'JetBrains Mono', monospace", marginBottom: 2 }}>
+                          {t.ticker} {t.call_put} ${t.strike}: {t.pnl >= 0 ? "+" : ""}${t.pnl.toFixed(0)}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Monthly P&L Bar Chart */}
           <div style={{ ...S.card, marginBottom: 16 }}>
             <div style={{ color: S.text, fontWeight: "bold", fontSize: 14, marginBottom: 16, fontFamily: S.font }}>📅 Monthly P&L</div>
@@ -1233,6 +1325,23 @@ export default function OptionsJournal() {
                 ))}
               </div>
 
+              {/* Type filter */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {[
+                  { label: "All Trades", filter: "ALL" },
+                  { label: "💵 Premium Sold (CCs/CSPs)", filter: "SOLD" },
+                  { label: "🎯 Directional (Long)", filter: "BOUGHT" },
+                ].map(f => (
+                  <button key={f.filter} onClick={() => setFilterStrategy(f.filter === "SOLD" ? "Covered Call" : f.filter === "BOUGHT" ? "Long Call" : "ALL")}
+                    style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid #e8ecf0", fontFamily: S.font,
+                      background: (f.filter === "ALL" && filterStrategy === "ALL") || (f.filter === "SOLD" && filterStrategy === "Covered Call") || (f.filter === "BOUGHT" && filterStrategy === "Long Call") ? (f.filter === "SOLD" ? "#ecfdf3" : f.filter === "BOUGHT" ? "#eff6ff" : "#f8f9fb") : "transparent",
+                      color: (f.filter === "ALL" && filterStrategy === "ALL") || (f.filter === "SOLD" && filterStrategy === "Covered Call") || (f.filter === "BOUGHT" && filterStrategy === "Long Call") ? (f.filter === "SOLD" ? "#0d9f4f" : f.filter === "BOUGHT" ? "#2563eb" : S.text) : S.dim,
+                    }}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
               {/* Trade list with P&L bars */}
               <div style={S.card}>
                 {/* Column headers */}
@@ -1255,9 +1364,12 @@ export default function OptionsJournal() {
                       {/* Ticker */}
                       <div style={{ color: "#0d9f4f", fontWeight: "bold", fontSize: 14, ...S.mono }}>{t.ticker}</div>
                       {/* Strategy */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <span style={{ padding: "2px 6px", borderRadius: 3, fontSize: 10, fontWeight: "bold", background: t.call_put === "Call" ? "#dbeafe" : "#fef3c7", color: t.call_put === "Call" ? "#1d4ed8" : "#92400e" }}>{t.call_put}</span>
-                        <span style={{ fontSize: 12, color: S.text, fontFamily: S.font }}>{t.strategy}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                        <span style={{ padding: "2px 6px", borderRadius: 3, fontSize: 9, fontWeight: "bold", background: t.is_short ? "#ecfdf3" : "#eff6ff", color: t.is_short ? "#0d9f4f" : "#2563eb", letterSpacing: 0.5 }}>
+                          {t.is_short ? "SOLD" : "BOUGHT"}
+                        </span>
+                        <span style={{ padding: "2px 5px", borderRadius: 3, fontSize: 9, fontWeight: "bold", background: t.call_put === "Call" ? "#dbeafe" : "#fef3c7", color: t.call_put === "Call" ? "#1d4ed8" : "#92400e" }}>{t.call_put}</span>
+                        <span style={{ fontSize: 11, color: S.dim, fontFamily: S.font }}>{t.strategy}</span>
                       </div>
                       {/* Strike */}
                       <div style={{ ...S.mono, fontSize: 12, color: S.text }}>${t.strike}</div>
