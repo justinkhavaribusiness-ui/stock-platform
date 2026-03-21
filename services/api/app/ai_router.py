@@ -1407,3 +1407,75 @@ Be direct. Do not write a fluff piece. If the stock is overvalued, say so. If th
     # Cache for 30 minutes
     rdb.setex(cache_key, 1800, json.dumps(result))
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  TRADE REPLAY / JOURNAL AI
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/trade-replay")
+async def trade_replay():
+    """AI analysis of trading history — patterns, mistakes, behavioral insights."""
+    import pathlib
+
+    data_file = pathlib.Path.home() / "dev/stock-platform/.options_trades.json"
+    if not data_file.exists():
+        raise HTTPException(400, "No options journal data found. Upload a Fidelity CSV first.")
+
+    with open(data_file) as f:
+        journal = json.load(f)
+
+    closed = journal.get("closed_trades", [])
+    opens = journal.get("open_positions", [])
+    summary = journal.get("summary", {})
+
+    if not closed:
+        raise HTTPException(400, "No closed trades to analyze")
+
+    # Build context
+    trades_text = []
+    for t in closed[:50]:
+        trades_text.append(f"{t.get('ticker','?')} {t.get('call_put','?')} ${t.get('strike',0)} | {t.get('strategy','?')} | P&L: ${t.get('pnl',0):.2f} | Close: {t.get('close_date','?')}")
+
+    open_text = []
+    for o in opens:
+        open_text.append(f"{o.get('ticker','?')} {o.get('call_put','?')} ${o.get('strike',0)} | {o.get('strategy','?')} | {o.get('contracts',0)} contracts")
+
+    context = f"""TRADING JOURNAL ANALYSIS
+
+Summary: {json.dumps(summary)}
+
+Closed Trades ({len(closed)} total):
+{chr(10).join(trades_text)}
+
+Open Positions ({len(opens)}):
+{chr(10).join(open_text)}
+"""
+
+    system = """You are an elite trading coach analyzing a retail trader's options journal.
+
+Provide a detailed analysis as JSON with these keys:
+- "overview": 2-3 sentence summary of their trading performance
+- "strengths": array of 3-4 specific strengths with examples from their trades
+- "weaknesses": array of 3-4 specific weaknesses or patterns to fix
+- "best_trades": array of top 3 trades with ticker, P&L, and why it was good
+- "worst_trades": array of bottom 3 trades with ticker, P&L, and what went wrong
+- "behavioral_patterns": array of 2-3 behavioral patterns you notice (e.g., "tends to hold losers too long", "good at sizing winners")
+- "recommendations": array of 3-4 specific actionable recommendations
+- "grade": letter grade A through F with brief justification
+- "next_steps": array of 2-3 immediate actions to take
+
+Be direct and honest. Reference specific trades. Don't write fluff."""
+
+    try:
+        raw = _call_claude(system, context, max_tokens=3000)
+        result = _clean_json(raw)
+    except json.JSONDecodeError:
+        result = {"raw_analysis": raw, "parse_error": True}
+    except Exception as e:
+        raise HTTPException(500, f"AI analysis failed: {str(e)}")
+
+    result["summary"] = summary
+    result["total_trades"] = len(closed)
+    result["open_count"] = len(opens)
+    return result

@@ -979,3 +979,257 @@ async def geo_monitor():
         "trade_signals": signals,
         "updated_at": _now(),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FIDELITY CSV UPLOAD
+# ═══════════════════════════════════════════════════════════════════════
+from fastapi import UploadFile, File
+
+@router.post("/fidelity/upload-positions")
+async def upload_fidelity_positions(file: UploadFile = File(...)):
+    """Upload Fidelity positions CSV and store for all dashboards."""
+    import pathlib, csv as csvmod, io
+    content = (await file.read()).decode("utf-8-sig")
+
+    # Parse and validate
+    lines = content.strip().split("\n")
+    reader = csvmod.DictReader(io.StringIO(content))
+    rows = list(reader)
+    if not rows or "Symbol" not in rows[0]:
+        return {"error": "Invalid CSV — missing Symbol column"}
+
+    # Save to data directory
+    data_dir = pathlib.Path(__file__).parent.parent / "data"
+    data_dir.mkdir(exist_ok=True)
+    csv_path = data_dir / "positions.csv"
+    with open(csv_path, "w") as f:
+        f.write(content)
+
+    # Parse positions for summary
+    positions = []
+    total_value = 0
+    for row in rows:
+        sym = (row.get("Symbol") or "").strip()
+        if not sym or "SPAXX" in sym or sym == "Cash":
+            continue
+        try:
+            val = float((row.get("Current Value") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+            total_value += val
+            positions.append(sym)
+        except (ValueError, TypeError):
+            continue
+
+    return {
+        "status": "ok",
+        "positions_count": len(positions),
+        "total_value": round(total_value, 2),
+        "tickers": positions,
+        "file_saved": str(csv_path),
+    }
+
+@router.post("/fidelity/upload-history")
+async def upload_fidelity_history(file: UploadFile = File(...)):
+    """Upload Fidelity activity/orders CSV for options journal and trade replay."""
+    import pathlib
+    content = (await file.read()).decode("utf-8-sig")
+
+    # Import the options parser
+    from app.options_router import parse_options_csv, DATA_FILE
+
+    # Parse options trades
+    try:
+        result = parse_options_csv(content)
+    except Exception as e:
+        return {"error": f"Parse failed: {str(e)}"}
+
+    # Merge with existing data if present
+    import pathlib as _p
+    if _p.Path(DATA_FILE).exists():
+        with open(DATA_FILE) as f:
+            existing = json.load(f)
+
+        # Deduplicate: keep existing trades not in new data
+        new_symbols = {t["symbol"] + t.get("close_date", "") for t in result.get("closed_trades", [])}
+        kept = [t for t in existing.get("closed_trades", []) if t.get("symbol", "") + t.get("close_date", "") not in new_symbols]
+        result["closed_trades"] = kept + result["closed_trades"]
+
+        # Recalculate summary
+        closed = result["closed_trades"]
+        total_pnl = round(sum(t.get("pnl", 0) for t in closed), 2)
+        winners = [t for t in closed if t.get("pnl", 0) > 0]
+        losers = [t for t in closed if t.get("pnl", 0) < 0]
+        result["summary"] = {
+            "total_pnl": total_pnl,
+            "total_trades": len(closed),
+            "win_rate": round(len(winners) / len(closed) * 100, 1) if closed else 0,
+            "winners": len(winners),
+            "losers": len(losers),
+            "avg_win": round(sum(t["pnl"] for t in winners) / len(winners), 2) if winners else 0,
+            "avg_loss": round(sum(t["pnl"] for t in losers) / len(losers), 2) if losers else 0,
+            "open_count": len(result.get("open_positions", [])),
+        }
+
+    # Save
+    import os
+    os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+    with open(DATA_FILE, "w") as f:
+        json.dump(result, f, indent=2)
+
+    return {"status": "ok", "summary": result["summary"]}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  PORTFOLIO EQUITY CURVE
+# ═══════════════════════════════════════════════════════════════════════
+EQUITY_KEY = "equity:history"
+
+@router.post("/equity/snapshot")
+async def add_equity_snapshot(body: dict):
+    """Log daily equity snapshot for curve tracking."""
+    entry = {
+        "value": body.get("value", 0),
+        "cash": body.get("cash", 0),
+        "invested": body.get("invested", 0),
+        "day_pnl": body.get("day_pnl", 0),
+        "timestamp": _now(),
+        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+    }
+    rdb.rpush(EQUITY_KEY, json.dumps(entry))
+    rdb.ltrim(EQUITY_KEY, -365, -1)
+    return entry
+
+@router.get("/equity/curve")
+async def get_equity_curve():
+    """Get equity curve data with drawdown and benchmark comparison."""
+    snapshots = _list_get(EQUITY_KEY)
+
+    if not snapshots:
+        # Try to build from Fidelity data if available
+        import pathlib, csv as csvmod
+        csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+        if csv_path.exists():
+            with open(csv_path) as f:
+                reader = csvmod.DictReader(f)
+                total = 0
+                for row in reader:
+                    try:
+                        val = float((row.get("Current Value") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                        total += val
+                    except (ValueError, TypeError):
+                        continue
+            if total > 0:
+                snapshots = [{"value": round(total, 2), "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "timestamp": _now()}]
+
+    if not snapshots:
+        return {"curve": [], "stats": {}}
+
+    values = [s.get("value", 0) for s in snapshots]
+    peak = values[0]
+    drawdowns = []
+    for v in values:
+        if v > peak:
+            peak = v
+        dd = ((v - peak) / peak * 100) if peak > 0 else 0
+        drawdowns.append(round(dd, 2))
+
+    first_val = values[0]
+    last_val = values[-1]
+    total_return = round(((last_val - first_val) / first_val * 100), 2) if first_val > 0 else 0
+    max_dd = round(min(drawdowns), 2) if drawdowns else 0
+
+    curve = []
+    for i, s in enumerate(snapshots):
+        curve.append({
+            **s,
+            "drawdown": drawdowns[i] if i < len(drawdowns) else 0,
+        })
+
+    return {
+        "curve": curve,
+        "stats": {
+            "current": round(last_val, 2),
+            "start": round(first_val, 2),
+            "total_return": total_return,
+            "max_drawdown": max_dd,
+            "peak": round(max(values), 2),
+            "trough": round(min(values), 2),
+            "days": len(snapshots),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  DIVIDEND TRACKER
+# ═══════════════════════════════════════════════════════════════════════
+DIVIDENDS_KEY = "dividends:history"
+
+class DividendEntry(BaseModel):
+    ticker: str
+    amount: float
+    date: str = ""
+    shares: float = 0
+    per_share: float = 0
+
+@router.get("/dividends")
+async def get_dividends():
+    """Get dividend history and upcoming ex-dates."""
+    history = _list_get(DIVIDENDS_KEY)
+    total = round(sum(d.get("amount", 0) for d in history), 2)
+
+    # Get upcoming dividends from yfinance for portfolio tickers
+    upcoming = []
+    try:
+        import yfinance as yf
+        import pathlib, csv as csvmod
+        csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+        if csv_path.exists():
+            tickers = []
+            with open(csv_path) as f:
+                reader = csvmod.DictReader(f)
+                for row in reader:
+                    sym = (row.get("Symbol") or "").strip()
+                    if sym and "SPAXX" not in sym and sym != "Cash" and not sym.startswith("-"):
+                        tickers.append(sym)
+
+            for tk in tickers[:15]:
+                try:
+                    info = yf.Ticker(tk).info or {}
+                    div_yield = info.get("dividendYield")
+                    div_rate = info.get("dividendRate")
+                    ex_date = info.get("exDividendDate")
+                    if div_yield and div_yield > 0:
+                        upcoming.append({
+                            "ticker": tk,
+                            "yield": round(div_yield * 100, 2),
+                            "annual_rate": round(div_rate, 2) if div_rate else None,
+                            "ex_date": ex_date,
+                        })
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return {
+        "history": history,
+        "upcoming": sorted(upcoming, key=lambda x: x["yield"], reverse=True),
+        "total_received": total,
+        "total_entries": len(history),
+    }
+
+@router.post("/dividends")
+async def add_dividend(entry: DividendEntry):
+    item = {
+        "id": _make_id(),
+        "ticker": entry.ticker.upper(),
+        "amount": entry.amount,
+        "date": entry.date or _now()[:10],
+        "shares": entry.shares,
+        "per_share": entry.per_share,
+        "created": _now(),
+    }
+    return _list_add(DIVIDENDS_KEY, item)
+
+@router.delete("/dividends/{div_id}")
+async def delete_dividend(div_id: str):
+    return _list_delete(DIVIDENDS_KEY, "id", div_id)
