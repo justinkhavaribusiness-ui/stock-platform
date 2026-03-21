@@ -383,3 +383,96 @@ def get_cost_basis():
         "total_premium": total_premium,
         "total_adjustment": total_adjustment,
     }
+
+
+@router.get("/options-chain/{ticker}")
+def get_options_chain(ticker: str, expiry: str = ""):
+    """Get live options chain from yfinance for any ticker."""
+    import math
+    t = yf.Ticker(ticker.upper())
+    try:
+        expirations = list(t.options)
+    except Exception:
+        return {"ticker": ticker.upper(), "expirations": [], "chain": [], "stock_price": None}
+
+    if not expirations:
+        return {"ticker": ticker.upper(), "expirations": [], "chain": [], "stock_price": None}
+
+    # Get stock price
+    try:
+        hist = t.history(period="1d")
+        stock_price = float(hist["Close"].iloc[-1]) if not hist.empty else None
+    except Exception:
+        stock_price = None
+
+    # Pick expiry
+    target_expiry = expiry if expiry in expirations else expirations[0]
+
+    try:
+        chain = t.option_chain(target_expiry)
+    except Exception:
+        return {"ticker": ticker.upper(), "expirations": expirations, "chain": [], "stock_price": stock_price}
+
+    calls = chain.calls
+    puts = chain.puts
+
+    def fmt_chain(df, cp):
+        rows = []
+        for _, row in df.iterrows():
+            strike = float(row.get("strike", 0))
+            bid = float(row.get("bid", 0))
+            ask = float(row.get("ask", 0))
+            last = float(row.get("lastPrice", 0))
+            vol = int(row.get("volume", 0)) if not math.isnan(row.get("volume", 0)) else 0
+            oi = int(row.get("openInterest", 0)) if not math.isnan(row.get("openInterest", 0)) else 0
+            iv = float(row.get("impliedVolatility", 0))
+            itm = bool(row.get("inTheMoney", False))
+
+            # Delta estimate (rough Black-Scholes proxy)
+            if stock_price and strike > 0:
+                moneyness = stock_price / strike
+                if cp == "Call":
+                    delta_est = round(min(0.99, max(0.01, 0.5 + (moneyness - 1) * 2)), 2)
+                else:
+                    delta_est = round(max(-0.99, min(-0.01, -0.5 + (moneyness - 1) * 2)), 2)
+            else:
+                delta_est = None
+
+            # CC recommendation for short calls
+            cc_score = None
+            if cp == "Call" and stock_price and strike > stock_price:
+                otm_pct = (strike - stock_price) / stock_price * 100
+                if 3 <= otm_pct <= 8 and bid > 0.10:
+                    cc_score = "optimal"
+                elif 1 <= otm_pct <= 15 and bid > 0.05:
+                    cc_score = "viable"
+
+            rows.append({
+                "strike": strike,
+                "type": cp,
+                "bid": round(bid, 2),
+                "ask": round(ask, 2),
+                "last": round(last, 2),
+                "mid": round((bid + ask) / 2, 2) if bid and ask else round(last, 2),
+                "volume": vol,
+                "open_interest": oi,
+                "iv": round(iv * 100, 1),
+                "itm": itm,
+                "delta_est": delta_est,
+                "cc_score": cc_score,
+                "premium_100": round(bid * 100, 2) if bid else 0,
+                "annual_yield": round((bid / stock_price * 100 * 12), 1) if stock_price and bid else 0,
+            })
+        return rows
+
+    call_rows = fmt_chain(calls, "Call")
+    put_rows = fmt_chain(puts, "Put")
+
+    return {
+        "ticker": ticker.upper(),
+        "stock_price": round(stock_price, 2) if stock_price else None,
+        "expiry": target_expiry,
+        "expirations": expirations[:12],
+        "calls": call_rows,
+        "puts": put_rows,
+    }

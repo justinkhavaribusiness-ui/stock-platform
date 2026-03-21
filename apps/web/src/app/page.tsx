@@ -16,6 +16,10 @@ import WarMacro from "./WarMacro";
 import MarginTracker from "./MarginTracker";
 import PositionHealth from "./PositionHealth";
 import CostBasis from "./CostBasis";
+import OptionsChain from "./OptionsChain";
+import GrowthTracker from "./GrowthTracker";
+import CCIncome from "./CCIncome";
+import GeoMonitor from "./GeoMonitor";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1784,6 +1788,10 @@ function CryptoPanel() {
     { id:"margin",      label:"Margin",      icon:"💸" },
     { id:"health",      label:"Health",      icon:"🩺" },
     { id:"costbasis",   label:"Cost Basis",  icon:"💰" },
+    { id:"optchain",    label:"Chain",       icon:"⛓" },
+    { id:"growth",      label:"Growth",      icon:"🚀" },
+    { id:"ccincome",    label:"CC Income",   icon:"💵" },
+    { id:"geomonitor",  label:"Geo",         icon:"🌐" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
@@ -1791,10 +1799,10 @@ function CryptoPanel() {
     {cat:"Charts", items:tabs.filter(t=>["charts","robinhood","quotes","watchlist","heatmap"].includes(t.id))},
     {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment"].includes(t.id))},
     {cat:"Photonics", items:tabs.filter(t=>["photonics","screener","analytics"].includes(t.id))},
-    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health"].includes(t.id))},
+    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt"].includes(t.id))},
-    {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis"].includes(t.id))},
-    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro"].includes(t.id))},
+    {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis","optchain","ccincome"].includes(t.id))},
+    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor"].includes(t.id))},
     {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality"].includes(t.id))},
     {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates"].includes(t.id))},
   ];
@@ -7482,6 +7490,18 @@ function CryptoPanel() {
 
         {/* ── COST BASIS ─────────────────────────────────── */}
         {tab==="costbasis" && <CostBasis dark={dark} BASE={BASE} />}
+
+        {/* ── OPTIONS CHAIN ──────────────────────────────── */}
+        {tab==="optchain" && <OptionsChain dark={dark} BASE={BASE} />}
+
+        {/* ── GROWTH TRACKER ─────────────────────────────── */}
+        {tab==="growth" && <GrowthTracker dark={dark} BASE={BASE} />}
+
+        {/* ── CC INCOME ──────────────────────────────────── */}
+        {tab==="ccincome" && <CCIncome dark={dark} BASE={BASE} />}
+
+        {/* ── GEO MONITOR ────────────────────────────────── */}
+        {tab==="geomonitor" && <GeoMonitor dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (

@@ -701,3 +701,281 @@ async def health_scan():
         },
         **results,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ACCOUNT GROWTH TRACKER
+# ═══════════════════════════════════════════════════════════════════════
+GROWTH_KEY = "growth:snapshots"
+
+class GrowthSnapshot(BaseModel):
+    account_value: float
+    cash: float = 0
+    margin_used: float = 0
+    notes: str = ""
+
+@router.get("/growth")
+async def get_growth():
+    snapshots = _list_get(GROWTH_KEY)
+    if not snapshots:
+        return {"snapshots": [], "current": None, "goal": 50000, "stats": {}}
+
+    current = snapshots[-1] if snapshots else None
+    first = snapshots[0] if snapshots else None
+
+    # Calculate stats
+    current_val = current.get("account_value", 0) if current else 0
+    first_val = first.get("account_value", 0) if first else current_val
+    total_gain = current_val - first_val
+    days = max(1, len(snapshots))
+    daily_rate = total_gain / days if days > 0 else 0
+    weekly_rate = daily_rate * 7
+    monthly_rate = daily_rate * 30
+
+    goal = 50000
+    remaining = goal - current_val
+    days_to_goal = int(remaining / daily_rate) if daily_rate > 0 else 0
+
+    return {
+        "snapshots": snapshots[-90:],
+        "current": current,
+        "goal": goal,
+        "stats": {
+            "current_value": round(current_val, 2),
+            "total_gain": round(total_gain, 2),
+            "daily_rate": round(daily_rate, 2),
+            "weekly_rate": round(weekly_rate, 2),
+            "monthly_rate": round(monthly_rate, 2),
+            "remaining": round(remaining, 2),
+            "days_to_goal": days_to_goal,
+            "projected_date": "",
+            "snapshots_count": len(snapshots),
+        },
+    }
+
+@router.post("/growth")
+async def add_growth_snapshot(snap: GrowthSnapshot):
+    entry = {
+        "account_value": snap.account_value,
+        "cash": snap.cash,
+        "margin_used": snap.margin_used,
+        "notes": snap.notes,
+        "timestamp": _now(),
+    }
+    _list_add(GROWTH_KEY, entry)
+    return entry
+
+@router.post("/growth/goal")
+async def set_growth_goal(body: dict):
+    rdb.set("growth:goal", str(body.get("goal", 50000)))
+    return {"goal": body.get("goal", 50000)}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  WEEKLY CC INCOME DASHBOARD
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/cc-income")
+async def get_cc_income():
+    """Analyze CC income from options journal — by week, ticker, annualized."""
+    import pathlib
+    from collections import defaultdict
+    from datetime import datetime as dt
+
+    data_file = pathlib.Path.home() / "dev/stock-platform/.options_trades.json"
+    if not data_file.exists():
+        return {"weekly": [], "by_ticker": [], "summary": {}}
+
+    with open(data_file) as f:
+        journal = json.load(f)
+
+    # Collect all CC trades (closed short calls/puts)
+    cc_trades = []
+    for t in journal.get("closed_trades", []):
+        if t.get("is_short") and t.get("pnl", 0) != 0:
+            cc_trades.append(t)
+    for t in journal.get("orphan_closings", []):
+        if t.get("close_cash", 0) < 0:  # BTC = debit
+            cc_trades.append({"ticker": t.get("ticker", "?"), "pnl": abs(t["close_cash"]), "close_date": t.get("close_date", ""), "strategy": "CC (orphan)"})
+
+    # Open CC positions (premium not yet realized but collected)
+    open_premium = 0
+    for op in journal.get("open_positions", []):
+        if op.get("is_short"):
+            open_premium += op.get("premium_received", 0)
+
+    # Group by week
+    weekly = defaultdict(lambda: {"premium": 0, "trades": 0, "tickers": set()})
+    by_ticker = defaultdict(lambda: {"premium": 0, "trades": 0, "wins": 0, "losses": 0})
+
+    for t in cc_trades:
+        tk = t.get("ticker", "?")
+        pnl = t.get("pnl", 0)
+        close_date = t.get("close_date", "")
+
+        # Parse week
+        try:
+            if "/" in close_date:
+                d = dt.strptime(close_date, "%m/%d/%Y")
+            elif "-" in close_date:
+                d = dt.strptime(close_date, "%Y-%m-%d")
+            else:
+                d = dt.now()
+            week_key = d.strftime("%Y-W%U")
+            week_label = d.strftime("%b %d")
+        except Exception:
+            week_key = "unknown"
+            week_label = "?"
+
+        weekly[week_key]["premium"] += pnl
+        weekly[week_key]["trades"] += 1
+        weekly[week_key]["tickers"].add(tk)
+        weekly[week_key]["label"] = week_label
+
+        by_ticker[tk]["premium"] += pnl
+        by_ticker[tk]["trades"] += 1
+        if pnl > 0:
+            by_ticker[tk]["wins"] += 1
+        else:
+            by_ticker[tk]["losses"] += 1
+
+    # Format output
+    weekly_list = []
+    for wk in sorted(weekly.keys()):
+        w = weekly[wk]
+        weekly_list.append({
+            "week": wk,
+            "label": w.get("label", wk),
+            "premium": round(w["premium"], 2),
+            "trades": w["trades"],
+            "tickers": list(w["tickers"]),
+        })
+
+    ticker_list = []
+    for tk, data in sorted(by_ticker.items(), key=lambda x: x[1]["premium"], reverse=True):
+        ticker_list.append({
+            "ticker": tk,
+            "premium": round(data["premium"], 2),
+            "trades": data["trades"],
+            "wins": data["wins"],
+            "losses": data["losses"],
+            "win_rate": round(data["wins"] / data["trades"] * 100, 1) if data["trades"] else 0,
+        })
+
+    total_premium = sum(t["pnl"] for t in cc_trades if t.get("pnl", 0) > 0)
+    total_losses = sum(t["pnl"] for t in cc_trades if t.get("pnl", 0) < 0)
+    weeks_active = max(1, len(weekly_list))
+    avg_weekly = total_premium / weeks_active
+
+    return {
+        "weekly": weekly_list,
+        "by_ticker": ticker_list,
+        "summary": {
+            "total_premium": round(total_premium, 2),
+            "total_losses": round(total_losses, 2),
+            "net_income": round(total_premium + total_losses, 2),
+            "open_premium": round(open_premium, 2),
+            "total_cc_trades": len(cc_trades),
+            "weeks_active": weeks_active,
+            "avg_weekly": round(avg_weekly, 2),
+            "annualized": round(avg_weekly * 52, 2),
+        },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  GEOPOLITICAL SIGNAL MONITOR
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/geo-monitor")
+async def geo_monitor():
+    """Geopolitical risk monitor — oil, rates, ceasefire signals, portfolio impact."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        return {"error": "yfinance not available"}
+
+    # Key indicators
+    def safe_price(sym):
+        try:
+            t = yf.Ticker(sym)
+            h = t.history(period="1mo")
+            if h.empty:
+                return {}
+            prices = h["Close"].tolist()
+            current = prices[-1]
+            prev = prices[-2] if len(prices) > 1 else current
+            week_ago = prices[-5] if len(prices) >= 5 else prices[0]
+            month_ago = prices[0]
+            return {
+                "current": round(current, 2),
+                "daily_chg": round((current - prev) / prev * 100, 2),
+                "weekly_chg": round((current - week_ago) / week_ago * 100, 2),
+                "monthly_chg": round((current - month_ago) / month_ago * 100, 2),
+                "trend": "rising" if current > week_ago else "falling",
+            }
+        except Exception:
+            return {}
+
+    brent = safe_price("BZ=F")
+    vix = safe_price("^VIX")
+    tnx = safe_price("^TNX")
+    dxy = safe_price("DX-Y.NYB")
+    gold = safe_price("GC=F")
+
+    # Risk level assessment
+    oil_risk = "critical" if (brent.get("current", 0) > 100) else "elevated" if brent.get("current", 0) > 85 else "normal"
+    vix_risk = "critical" if (vix.get("current", 0) > 30) else "elevated" if vix.get("current", 0) > 20 else "normal"
+    rate_risk = "elevated" if (tnx.get("current", 0) > 4.5) else "normal"
+
+    # Ceasefire signal heuristics
+    oil_falling = brent.get("daily_chg", 0) < -2
+    vix_falling = vix.get("daily_chg", 0) < -3
+    gold_falling = gold.get("daily_chg", 0) < -1
+    ceasefire_signals = sum([oil_falling, vix_falling, gold_falling])
+
+    if ceasefire_signals >= 2:
+        ceasefire_status = "possible"
+        ceasefire_note = "Multiple de-escalation signals: oil, VIX, and/or gold falling simultaneously"
+    elif ceasefire_signals == 1:
+        ceasefire_status = "unlikely"
+        ceasefire_note = "Mixed signals — one indicator suggesting de-escalation"
+    else:
+        ceasefire_status = "no_signal"
+        ceasefire_note = "No de-escalation signals detected. War premium intact."
+
+    # Trade signals
+    signals = []
+    if oil_falling and brent.get("daily_chg", 0) < -3:
+        signals.append({"signal": "OIL CRASH", "action": "Consider adding SOFI/rate-sensitive names", "urgency": "high"})
+    if vix.get("current", 0) > 30:
+        signals.append({"signal": "VIX ELEVATED", "action": "Caution on new entries — sell premium instead", "urgency": "medium"})
+    if brent.get("current", 0) > 110:
+        signals.append({"signal": "OIL SPIKE", "action": "Avoid rate-sensitive longs. Hold AI/photonics.", "urgency": "high"})
+    if tnx.get("trend") == "falling" and tnx.get("weekly_chg", 0) < -2:
+        signals.append({"signal": "YIELDS FALLING", "action": "Rate cut expectations rising — bullish SOFI", "urgency": "high"})
+    if ceasefire_status == "possible":
+        signals.append({"signal": "CEASEFIRE SIGNAL", "action": "Load SOFI/OSCR before confirmation", "urgency": "critical"})
+
+    return {
+        "indicators": {
+            "brent": brent,
+            "vix": vix,
+            "10y_yield": tnx,
+            "dxy": dxy,
+            "gold": gold,
+        },
+        "risk_levels": {
+            "oil": oil_risk,
+            "volatility": vix_risk,
+            "rates": rate_risk,
+            "overall": "critical" if oil_risk == "critical" or vix_risk == "critical" else "elevated" if oil_risk == "elevated" else "normal",
+        },
+        "ceasefire": {
+            "status": ceasefire_status,
+            "note": ceasefire_note,
+            "signals_detected": ceasefire_signals,
+        },
+        "trade_signals": signals,
+        "updated_at": _now(),
+    }
