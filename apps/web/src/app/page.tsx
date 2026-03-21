@@ -28,6 +28,7 @@ import PriceAlerts from "./PriceAlerts";
 import CorrelationMatrix from "./CorrelationMatrix";
 import EarningsPrep from "./EarningsPrep";
 import MultiAccount from "./MultiAccount";
+import MarketIntel from "./MarketIntel";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1810,6 +1811,7 @@ function CryptoPanel() {
     { id:"corrmatrix",  label:"Corr",        icon:"🔗" },
     { id:"earnprep",    label:"Earn Prep",   icon:"📊" },
     { id:"multiacct",   label:"Accounts",    icon:"🏦" },
+    { id:"mktintel",    label:"Intel",       icon:"🧠" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
@@ -1820,7 +1822,7 @@ function CryptoPanel() {
     {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt","tradereplay"].includes(t.id))},
     {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis","optchain","ccincome"].includes(t.id))},
-    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor"].includes(t.id))},
+    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor","mktintel"].includes(t.id))},
     {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality","pricealerts","earnprep"].includes(t.id))},
     {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates"].includes(t.id))},
   ];
@@ -7544,6 +7546,9 @@ function CryptoPanel() {
 
         {/* ── MULTI-ACCOUNT ──────────────────────────────── */}
         {tab==="multiacct" && <MultiAccount dark={dark} BASE={BASE} />}
+
+        {/* ── MARKET INTELLIGENCE ────────────────────────── */}
+        {tab==="mktintel" && <MarketIntel dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (

@@ -23,15 +23,31 @@ except ImportError:
 
 import redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 rdb = redis.from_url(REDIS_URL, decode_responses=True)
+
+# Load .env if key not in environment
+def _get_anthropic_key():
+    key = os.getenv("ANTHROPIC_API_KEY", "")
+    if key:
+        return key
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ANTHROPIC_API_KEY="):
+                    return line.split("=", 1)[1].strip()
+    return ""
+
+ANTHROPIC_KEY = _get_anthropic_key()
 
 
 def _call_claude(system: str, prompt: str, max_tokens: int = 2000) -> str:
     """Helper to call Claude and return text response."""
-    if not ANTHROPIC_AVAILABLE or not ANTHROPIC_KEY:
+    key = os.getenv("ANTHROPIC_API_KEY", "") or ANTHROPIC_KEY
+    if not ANTHROPIC_AVAILABLE or not key:
         raise HTTPException(500, "Anthropic API key not configured")
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    client = anthropic.Anthropic(api_key=key)
     message = client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=max_tokens,
@@ -1478,4 +1494,145 @@ Be direct and honest. Reference specific trades. Don't write fluff."""
     result["summary"] = summary
     result["total_trades"] = len(closed)
     result["open_count"] = len(opens)
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  MARKET INTELLIGENCE — DEEP MACRO ANALYSIS WITH EMERGENCY ALERTS
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/market-intel")
+async def market_intel():
+    """Deep macro analysis with emergency alerts, war assessment, and portfolio trade signals."""
+    cache_key = "cache:market-intel"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+
+    # Gather current macro data
+    def safe_quote(sym):
+        try:
+            t = yf.Ticker(sym)
+            h = t.history(period="5d")
+            if h.empty:
+                return {}
+            last = float(h["Close"].iloc[-1])
+            prev = float(h["Close"].iloc[-2]) if len(h) > 1 else last
+            week_ago = float(h["Close"].iloc[0])
+            return {
+                "price": round(last, 2),
+                "daily_chg": round((last - prev) / prev * 100, 2),
+                "weekly_chg": round((last - week_ago) / week_ago * 100, 2),
+            }
+        except Exception:
+            return {}
+
+    oil = safe_quote("BZ=F")
+    wti = safe_quote("CL=F")
+    vix = safe_quote("^VIX")
+    tnx = safe_quote("^TNX")
+    tyx = safe_quote("^TYX")
+    dxy = safe_quote("DX-Y.NYB")
+    gold = safe_quote("GC=F")
+    spy = safe_quote("SPY")
+    qqq = safe_quote("QQQ")
+    btc = safe_quote("BTC-USD")
+
+    # Load portfolio tickers
+    portfolio_tickers = []
+    try:
+        import pathlib, csv as csvmod
+        csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+        if csv_path.exists():
+            with open(csv_path) as f:
+                reader = csvmod.DictReader(f)
+                for row in reader:
+                    sym = (row.get("Symbol") or "").strip()
+                    if sym and "SPAXX" not in sym and sym != "Cash" and not sym.startswith("-"):
+                        portfolio_tickers.append(sym)
+    except Exception:
+        pass
+
+    macro_context = f"""CURRENT MARKET DATA (live):
+- Brent Oil: ${oil.get('price','N/A')} ({oil.get('daily_chg','?')}% today, {oil.get('weekly_chg','?')}% 5d)
+- WTI Oil: ${wti.get('price','N/A')} ({wti.get('daily_chg','?')}% today)
+- VIX: {vix.get('price','N/A')} ({vix.get('daily_chg','?')}% today, {vix.get('weekly_chg','?')}% 5d)
+- 10Y Yield: {tnx.get('price','N/A')}% ({tnx.get('daily_chg','?')}% today)
+- 30Y Yield: {tyx.get('price','N/A')}%
+- DXY Dollar: {dxy.get('price','N/A')} ({dxy.get('daily_chg','?')}% today)
+- Gold: ${gold.get('price','N/A')} ({gold.get('daily_chg','?')}% today)
+- SPY: ${spy.get('price','N/A')} ({spy.get('daily_chg','?')}% today, {spy.get('weekly_chg','?')}% 5d)
+- QQQ: ${qqq.get('price','N/A')} ({qqq.get('daily_chg','?')}% today)
+- BTC: ${btc.get('price','N/A')} ({btc.get('daily_chg','?')}% today)
+
+PORTFOLIO HOLDINGS: {', '.join(portfolio_tickers[:20])}
+
+Today's date: {datetime.now(timezone.utc).strftime('%B %d, %Y')}
+"""
+
+    system = """You are an elite macro strategist and geopolitical analyst providing real-time market intelligence for a retail trader running a covered call wheel strategy on a ~$30K Fidelity account.
+
+Your job is to synthesize the current macro environment into actionable intelligence. Think like the best analysts from Goldman Sachs, Bridgewater, and institutional trading desks — but translate it for a retail trader who needs to know what to DO, not just what's happening.
+
+Return valid JSON with these keys:
+
+"threat_level": "critical" | "elevated" | "normal" — overall market risk right now
+
+"headline": one-sentence summary of the most important thing happening in markets right now (max 15 words)
+
+"emergency_alerts": array of objects, each with:
+  - "alert": short title (e.g., "STRAIT OF HORMUZ CLOSED", "VIX SPIKE ABOVE 30")
+  - "severity": "critical" | "high" | "medium"
+  - "detail": 2-3 sentence explanation of what happened and why it matters
+  - "portfolio_impact": how this specifically affects the trader's portfolio
+  - "action": what the trader should DO right now
+Only include genuinely urgent items. Empty array if nothing urgent.
+
+"macro_assessment": object with:
+  - "war_status": current Iran/Middle East war assessment (2-3 sentences)
+  - "fed_outlook": rate cut/hold expectations and why (2 sentences)
+  - "recession_risk": percentage estimate with one sentence justification
+  - "oil_thesis": what oil prices mean for the portfolio (2 sentences)
+  - "volatility_regime": current VIX regime and what it means for selling premium
+
+"scenario_probabilities": array of 3 scenarios, each with:
+  - "scenario": name (e.g., "Ceasefire 2-4 weeks")
+  - "probability": percentage
+  - "market_impact": what happens to SPY/oil/rates
+  - "portfolio_play": what to do in this scenario
+
+"trade_signals": array of specific actionable signals, each with:
+  - "signal": title
+  - "ticker": relevant ticker or "MACRO"
+  - "direction": "bullish" | "bearish" | "neutral"
+  - "action": specific trade action
+  - "urgency": "now" | "this_week" | "watch"
+  - "rationale": one sentence why
+
+"positions_to_watch": array for specific portfolio holdings that need attention right now, each with:
+  - "ticker": from the portfolio
+  - "status": "safe" | "caution" | "danger"
+  - "note": why this position needs attention right now
+
+Be brutally honest. Don't hedge everything. Give real probabilities and real trade calls. The trader wants to know: what is happening, why does it matter to MY portfolio, and what should I DO about it."""
+
+    try:
+        raw = _call_claude(system, macro_context, max_tokens=4000)
+        result = _clean_json(raw)
+    except json.JSONDecodeError:
+        result = {"raw_analysis": raw, "parse_error": True}
+    except Exception as e:
+        raise HTTPException(500, f"Market intel failed: {str(e)}")
+
+    result["macro_data"] = {
+        "oil": oil, "wti": wti, "vix": vix, "tnx": tnx,
+        "dxy": dxy, "gold": gold, "spy": spy, "qqq": qqq, "btc": btc,
+    }
+    result["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    # Cache for 5 minutes
+    rdb.setex(cache_key, 300, json.dumps(result))
     return result
