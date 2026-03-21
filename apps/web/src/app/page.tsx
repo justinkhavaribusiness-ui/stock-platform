@@ -1928,26 +1928,20 @@ function CryptoPanel() {
         </div>
       )}
 
-      {/* Mobile nav drawer — categorized */}
+      {/* Mobile nav drawer — uses same categories as desktop */}
       {mobileNav && (
-        <div className={`md:hidden border-b p-3 space-y-3 ${dark?"terminal-card-dark":"terminal-card-light"}`}>
-          {[
-            {cat:"Core", ids:["dashboard","charts","ai","portfolio","journal"]},
-            {cat:"Trading", ids:["robinhood","options","futures","bracket","screener"]},
-            {cat:"Markets", ids:["quotes","watchlist","heatmap","news","feeds","social"]},
-            {cat:"Analytics", ids:["analytics","backtest","perf","macro","earnings"]},
-            {cat:"More", ids:tabs.filter(t=>!["dashboard","charts","ai","portfolio","journal","robinhood","options","futures","bracket","screener","quotes","watchlist","heatmap","news","feeds","social","analytics","backtest","perf","macro","earnings"].includes(t.id)).map(t=>t.id)},
-          ].map(grp=>(
+        <div className={`md:hidden border-b p-3 space-y-3 overflow-y-auto ${dark?"terminal-card-dark":"terminal-card-light"}`} style={{maxHeight:"80vh"}}>
+          {cats.map(grp=>(
             <div key={grp.cat}>
               <div className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 px-1 ${dark?"text-blue-500/60":"text-blue-600"}`}>{grp.cat}</div>
               <div className="grid grid-cols-4 gap-1">
-                {grp.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t) return null; return (
+                {grp.items.map(t=>(
                   <button key={t.id} onClick={()=>{setTab(t.id);setMobileNav(false);}}
                     className={`flex flex-col items-center py-2.5 rounded-md text-[11px] font-medium ${tab===t.id?(dark?"bg-blue-600/10 text-blue-400":"bg-blue-50 text-blue-700"):dark?"text-zinc-500 hover:text-zinc-200":"text-zinc-600 hover:text-zinc-900"}`}>
                     <span className="text-lg mb-0.5">{t.icon}</span>
                     {t.label}
                   </button>
-                );})}
+                ))}
               </div>
             </div>
           ))}
