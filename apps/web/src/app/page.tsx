@@ -12,6 +12,10 @@ import EconCalendar from "./EconCalendar";
 import CreditMacro from "./CreditMacro";
 import AlertEngine from "./AlertEngine";
 import ConferenceCalls from "./ConferenceCalls";
+import WarMacro from "./WarMacro";
+import MarginTracker from "./MarginTracker";
+import PositionHealth from "./PositionHealth";
+import CostBasis from "./CostBasis";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -152,6 +156,7 @@ import PhotonicsCenter from "./PhotonicsCenter";
 
 import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import OptionsJournal from "./OptionsJournal";
+
 const BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8001";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -594,29 +599,24 @@ function CryptoPanel() {
       )}
     </div>
   );
-}function PersonalHeader() {
+}function PersonalHeader({ dark }: { dark?: boolean }) {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-  const isDark = typeof window !== "undefined" && document.documentElement.classList.contains("dark") || (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  const isOpen = hour >= 9 && hour < 16;
+  const statusLabel = hour >= 4 && hour < 9.5 ? "Pre-Market" : isOpen ? "Market Open" : hour >= 16 && hour < 20 ? "After Hours" : "Closed";
+  const statusColor = isOpen ? "#22c55e" : hour >= 4 && hour < 9.5 || hour >= 16 && hour < 20 ? "#eab308" : "#71717a";
 
   return (
-    <div style={{ padding: "20px 20px 14px", display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+    <div className="flex items-center justify-between mb-1">
       <div>
-        <div className="text-gradient-warm" style={{ fontSize: "clamp(22px, 4vw, 32px)", fontWeight: 800, fontFamily: "'DM Sans', sans-serif", letterSpacing: "-0.03em" }}>
-          {greeting}, Justin
-        </div>
-        <div style={{ fontSize: "clamp(12px, 2vw, 15px)", color: "#64748b", fontFamily: "'DM Sans', sans-serif", marginTop: 4, fontWeight: 500 }}>
-          {dateStr}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Market Status</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: hour >= 9 && hour < 16 ? "#34d399" : "#64748b", display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-            <span style={{ width: 8, height: 8, borderRadius: "50%", background: hour >= 9 && hour < 16 ? "#34d399" : hour >= 4 && hour < 9.5 || hour >= 16 && hour < 20 ? "#fbbf24" : "#475569", boxShadow: hour >= 9 && hour < 16 ? "0 0 8px rgba(52,211,153,0.5)" : "none" }} />
-            {hour >= 4 && hour < 9.5 ? "Pre-Market" : hour >= 9 && hour < 16 ? "Market Open" : hour >= 16 && hour < 20 ? "After Hours" : "Closed"}
-          </div>
+        <h1 className={`text-xl font-semibold tracking-tight ${dark ? "text-zinc-100" : "text-zinc-900"}`}>{greeting}, Justin</h1>
+        <div className="flex items-center gap-3 mt-0.5">
+          <span className={`text-xs ${dark ? "text-zinc-500" : "text-zinc-400"}`}>{dateStr}</span>
+          <span className="text-xs font-medium flex items-center gap-1.5" style={{ color: statusColor }}>
+            <span style={{ width: 5, height: 5, borderRadius: "50%", background: statusColor, boxShadow: isOpen ? "0 0 6px " + statusColor : "none" }} />
+            {statusLabel}
+          </span>
         </div>
       </div>
     </div>
@@ -823,7 +823,7 @@ function CryptoPanel() {
   const [socialLoading, setSocialLoading] = useState(false);
   const [socialTickers, setSocialTickers] = useState("SPY,QQQ,NVDA,AAPL,TSLA");
   // Community Hub (Discord + Twitter)
-  const [socialSubTab, setSocialSubTab] = useState<"discord"|"twitter"|"substack"|"serenity">("discord");
+  const [socialSubTab, setSocialSubTab] = useState<"discord"|"twitter"|"substack"|"serenity"|"signals">("discord");
   const [serenityPrices, setSerenityPrices] = useState<Record<string,{price:number;change:number;changePct:number}>>({});
   const [serenityLoading, setSerenityLoading] = useState(false);
   const [discordPresence, setDiscordPresence] = useState<any>(null);
@@ -836,8 +836,42 @@ function CryptoPanel() {
   const [twitterSearchTicker, setTwitterSearchTicker] = useState("");
   const [twitterWidgetLoaded, setTwitterWidgetLoaded] = useState(false);
   const [xFollowingView, setXFollowingView] = useState<string>("");
+  // X Curated Feed
+  const [xTimeline, setXTimeline] = useState<any[]>([]);
+  const [xTimelineLoading, setXTimelineLoading] = useState(false);
+  const [xWatchlist, setXWatchlist] = useState<any[]>([]);
+  const [xWatchlistLoading, setXWatchlistLoading] = useState(false);
+  const [xPolling, setXPolling] = useState(false);
+  const [xLastPolled, setXLastPolled] = useState<string>("");
+  const [xSubView, setXSubView] = useState<string>("watchlist");
+  const [xPasteText, setXPasteText] = useState("");
+  const [xParsing, setXParsing] = useState(false);
+  const [xParseResult, setXParseResult] = useState<string>("");
+  // Signal Intelligence Features
+  const [pnlData, setPnlData] = useState<any[]>([]);
+  const [pnlLoading, setPnlLoading] = useState(false);
+  const [themes, setThemes] = useState<any[]>([]);
+  const [themesLoading, setThemesLoading] = useState(false);
+  const [signalBrief, setSignalBrief] = useState("");
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [portfolioOverlap, setPortfolioOverlap] = useState<any[]>([]);
+  const [overlapLoading, setOverlapLoading] = useState(false);
+  const [convictionScores, setConvictionScores] = useState<any[]>([]);
+  const [convictionLoading, setConvictionLoading] = useState(false);
+  const [earningsCross, setEarningsCross] = useState<any[]>([]);
+  const [earningsXLoading, setEarningsXLoading] = useState(false);
+  const [sectorHeatmapData, setSectorHeatmapData] = useState<any[]>([]);
+  const [sectorHeatmapLoading, setSectorHeatmapLoading] = useState(false);
+  const [darkpoolData, setDarkpoolData] = useState<any[]>([]);
+  const [darkpoolLoading, setDarkpoolLoading] = useState(false);
   const [substackUrl, setSubstackUrl] = useState("");
   const [feedSources, setFeedSources] = useState<any[]>([]);
+  // Signals badge + Serenity signals
+  const [signalNewCount, setSignalNewCount] = useState(0);
+  const [serenitySignals, setSerenitySignals] = useState<any[]>([]);
+  const [serenitySignalsLoading, setSerenitySignalsLoading] = useState(false);
+  const [serenityPolling, setSerenityPolling] = useState(false);
+  const [serenitySignalHistory, setSerenitySignalHistory] = useState<any[]>([]);
   // Screener
   const [screenResults, setScreenResults] = useState<any[]>([]);
   const [screenLoading, setScreenLoading] = useState(false);
@@ -1083,7 +1117,16 @@ function CryptoPanel() {
   const [mlPrediction, setMlPrediction] = useState<any>(null);
   const [mlLoading, setMlLoading] = useState(false);
   // AI Sub-tab expanded
-  const [aiSubTab2, setAiSubTab2] = useState<"analysis"|"chat"|"rebalance"|"earnsummary"|"coach"|"scanner"|"riskalerts"|"senttime"|"predict"|"deepreview"|"doctor"|"narrative">("analysis");
+  const [aiSubTab2, setAiSubTab2] = useState<"analysis"|"chat"|"deepdive"|"rebalance"|"earnsummary"|"coach"|"scanner"|"riskalerts"|"senttime"|"predict"|"deepreview"|"doctor"|"narrative">("analysis");
+  const [ddTicker, setDdTicker] = useState("");
+  const [ddResult, setDdResult] = useState<any>(null);
+  const [ddLoading, setDdLoading] = useState(false);
+  const runDeepDive = async (ticker?: string) => {
+    const tk = (ticker || ddTicker).trim().toUpperCase();
+    if (!tk) return;
+    setDdLoading(true); setDdResult(null);
+    try { const r = await fetch(`${BASE}/ai/deep-dive`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticker: tk }) }); setDdResult(await r.json()); } catch {} finally { setDdLoading(false); }
+  };
 
   // ── v5.2 State ─────────────────────────────────────────────────────
   // Stress Test
@@ -1336,6 +1379,45 @@ function CryptoPanel() {
   const loadFeedSources = async () => { try { const r = await fetch(`${BASE}/feeds/sources`); const d = await r.json(); setFeedSources(d.sources || d || []); } catch {} };
   const loadSerenityPrices = async () => { setSerenityLoading(true); try { const tickers = SERENITY_POSITIONS.map(p=>p.ticker).join(","); const r = await fetch(`${BASE}/quotes?tickers=${tickers}`); const d = await r.json(); const prices: Record<string,{price:number;change:number;changePct:number}> = {}; (d.data||[]).forEach((q:any)=>{ if(q.ticker) prices[q.ticker]={price:q.price||0,change:q.change||0,changePct:q.changePercent||0}; }); setSerenityPrices(prices); } catch {} setSerenityLoading(false); };
 
+  const loadSerenitySignals = async () => { setSerenitySignalsLoading(true); try { const [newRes, histRes] = await Promise.all([fetch(`${BASE}/signals?source=serenity&status=new&limit=5`), fetch(`${BASE}/signals?source=serenity&limit=20`)]); const newD = await newRes.json(); const histD = await histRes.json(); setSerenitySignals(newD.signals || newD.data || newD || []); setSerenitySignalHistory(histD.signals || histD.data || histD || []); } catch {} setSerenitySignalsLoading(false); };
+  const pollSerenitySignals = async () => { setSerenityPolling(true); try { const r = await fetch(`${BASE}/signals/poll/twitter/aleabitoreddit`, { method: "POST" }); const d = await r.json(); const count = d.new_signals || d.count || 0; setSerenityPolling(false); loadSerenitySignals(); return count; } catch { setSerenityPolling(false); return 0; } };
+
+  // X Curated Feed loaders
+  const loadXTimeline = async () => { setXTimelineLoading(true); try { const r = await fetch(`${BASE}/signals/feed/timeline?limit=100`); const d = await r.json(); setXTimeline(d.feed || []); } catch {} setXTimelineLoading(false); };
+  const loadXWatchlist = async () => { setXWatchlistLoading(true); try { const r = await fetch(`${BASE}/signals/curated-watchlist`); const d = await r.json(); setXWatchlist(d.watchlist || []); } catch {} setXWatchlistLoading(false); };
+  const pollFollowingFeed = async () => { setXPolling(true); try { const r = await fetch(`${BASE}/signals/poll/following`, { method: "POST" }); const d = await r.json(); setXLastPolled(new Date().toLocaleTimeString()); setXPolling(false); loadXTimeline(); loadXWatchlist(); return d.total_new || 0; } catch { setXPolling(false); return 0; } };
+  const parseXPosts = async () => {
+    const raw = xPasteText.trim(); if (!raw) return;
+    setXParsing(true); setXParseResult("");
+    // Split posts by double newline or "---" separator
+    const chunks = raw.split(/\n{2,}|^-{3,}$/m).map(s => s.trim()).filter(s => s.length > 5);
+    // Try to extract @handle from each chunk (first @mention or "From @handle")
+    const posts = chunks.map(text => {
+      const handleMatch = text.match(/@(\w+)/);
+      return { text, source: handleMatch ? handleMatch[1] : "manual" };
+    });
+    try {
+      const r = await fetch(`${BASE}/signals/parse/bulk`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ posts }) });
+      const d = await r.json();
+      setXParseResult(`Parsed ${d.parsed} signal${d.parsed !== 1 ? "s" : ""} from ${posts.length} post${posts.length !== 1 ? "s" : ""}`);
+      setXPasteText("");
+      loadXTimeline(); loadXWatchlist();
+    } catch { setXParseResult("Error parsing posts"); }
+    setXParsing(false);
+  };
+  const addManualSignal = async (text: string, source: string) => { try { await fetch(`${BASE}/signals/manual`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ ticker: "SCAN", source, thesis: text, raw_text: text, action: "WATCH" }) }); loadXTimeline(); loadXWatchlist(); } catch {} };
+
+  // ── Signal Intelligence Functions ──
+  const loadPnlTracker = async () => { setPnlLoading(true); try { const r = await fetch(`${BASE}/signals/pnl-tracker`); const d = await r.json(); setPnlData(d.signals || []); } catch(e) { console.error(e); } setPnlLoading(false); };
+  const loadThemes = async () => { setThemesLoading(true); try { const r = await fetch(`${BASE}/signals/themes`); const d = await r.json(); setThemes(d.themes || []); } catch(e) { console.error(e); } setThemesLoading(false); };
+  const loadSignalBrief = async () => { setBriefLoading(true); try { const r = await fetch(`${BASE}/signals/morning-brief`); const d = await r.json(); setSignalBrief(d.brief || ""); } catch(e) { console.error(e); } setBriefLoading(false); };
+  const loadPortfolioOverlap = async () => { setOverlapLoading(true); try { const r = await fetch(`${BASE}/signals/portfolio-overlap`); const d = await r.json(); setPortfolioOverlap(d.overlaps || []); } catch(e) { console.error(e); } setOverlapLoading(false); };
+  const loadConvictionScores = async () => { setConvictionLoading(true); try { const r = await fetch(`${BASE}/signals/conviction-scores`); const d = await r.json(); setConvictionScores(d.scores || []); } catch(e) { console.error(e); } setConvictionLoading(false); };
+  const createAutoAlerts = async () => { try { const r = await fetch(`${BASE}/signals/auto-alerts`, { method: "POST" }); const d = await r.json(); alert(`Created ${d.created || 0} auto-alerts from signal levels`); } catch(e) { console.error(e); } };
+  const loadEarningsCross = async () => { setEarningsXLoading(true); try { const r = await fetch(`${BASE}/signals/earnings-crossref`); const d = await r.json(); setEarningsCross(d.tickers || []); } catch(e) { console.error(e); } setEarningsXLoading(false); };
+  const loadSectorHeatmapData = async () => { setSectorHeatmapLoading(true); try { const r = await fetch(`${BASE}/signals/sector-heatmap`); const d = await r.json(); setSectorHeatmapData(d.sectors || []); } catch(e) { console.error(e); } setSectorHeatmapLoading(false); };
+  const loadDarkpoolData = async () => { setDarkpoolLoading(true); try { const r = await fetch(`${BASE}/signals/darkpool-insider`); const d = await r.json(); setDarkpoolData(d.tickers || []); } catch(e) { console.error(e); } setDarkpoolLoading(false); };
+
   const runScreener = async (universe?: string, sort?: string, dir?: string) => {
     const u = universe || screenUniverse; const s = sort || screenSort; const d = dir || screenSortDir; setScreenLoading(true);
     try {
@@ -1498,6 +1580,27 @@ function CryptoPanel() {
     if (tab === "social" && socialSubTab === "serenity") { loadSerenityPrices(); }
   }, [tab, socialSubTab]);
 
+  // Serenity signals: Load when switching to Serenity sub-tab
+  useEffect(() => {
+    if (tab === "social" && socialSubTab === "serenity") { loadSerenitySignals(); }
+  }, [tab, socialSubTab]);
+
+  // Signal new count: Poll every 30s when on social tab
+  useEffect(() => {
+    if (tab !== "social") return;
+    const fetchCount = async () => { try { const r = await fetch(`${BASE}/signals/stats`); const d = await r.json(); setSignalNewCount(d.by_status?.new || 0); } catch {} };
+    fetchCount();
+    const iv = setInterval(fetchCount, 30000);
+    return () => clearInterval(iv);
+  }, [tab]);
+
+  // Community Hub: Load X curated feed when switching to Twitter sub-tab
+  useEffect(() => {
+    if (tab === "social" && socialSubTab === "twitter") {
+      loadXTimeline(); loadXWatchlist();
+    }
+  }, [tab, socialSubTab]);
+
   // Community Hub: Load Twitter widget script when switching to Twitter sub-tab
   useEffect(() => {
     if (tab === "social" && (socialSubTab === "twitter" || socialSubTab === "serenity") && !twitterWidgetLoaded) {
@@ -1604,21 +1707,21 @@ function CryptoPanel() {
 
   const filteredConvictions = convFilter==="all" ? convictions : convictions.filter(c=>c.status===convFilter);
 
-  // Theme classes — Glassmorphism Design System
-  const bg = dark ? "glass-bg-dark text-slate-200" : "glass-bg-light text-slate-900";
-  const cardBg = dark ? "glass-card glass-card-dark rounded-xl" : "glass-card glass-card-light rounded-xl";
-  const headerBg = dark ? "glass-header-dark" : "glass-header-light";
-  const inputCls = dark ? "bg-slate-800/60 border-white/[0.08] text-slate-200 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400/20" : "bg-white/80 border-slate-200 text-slate-900 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20";
-  const input = `${inputCls} px-3 py-2.5 text-sm focus:outline-none rounded-lg font-mono border transition-all`;
-  const btn = "bg-gradient-to-r from-indigo-500 to-purple-500 text-white px-4 py-2.5 text-sm font-semibold hover:from-indigo-400 hover:to-purple-400 rounded-lg transition-all shadow-md shadow-indigo-500/20 active:scale-[0.98]";
-  const btnOutline = dark ? "border border-white/[0.08] text-slate-400 px-3 py-2 text-sm rounded-lg hover:border-indigo-400/40 hover:text-indigo-300 hover:bg-indigo-400/[0.06] transition-all backdrop-blur-sm" : "border border-slate-200 text-slate-600 px-3 py-2 text-sm rounded-lg hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50 transition-all";
-  const dimText = dark ? "text-slate-500" : "text-slate-500";
-  const dimText2 = dark ? "text-slate-600" : "text-slate-400";
-  const dimText3 = dark ? "text-slate-700" : "text-slate-300";
-  const bodyText = dark ? "text-slate-300" : "text-slate-700";
-  const headText = dark ? "text-slate-100" : "text-slate-900";
-  const borderDim = dark ? "border-white/[0.06]" : "border-slate-200";
-  const borderDim2 = dark ? "border-white/[0.04]" : "border-slate-100";
+  // Theme classes — Professional Flat Design
+  const bg = dark ? "terminal-bg-dark text-zinc-300" : "terminal-bg-light text-zinc-700";
+  const cardBg = dark ? "terminal-card-dark rounded-lg" : "terminal-card-light rounded-lg";
+  const headerBg = dark ? "terminal-header-dark" : "terminal-header-light";
+  const inputCls = dark ? "bg-zinc-900 border-zinc-700 text-zinc-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20" : "bg-white border-zinc-300 text-zinc-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20";
+  const input = `${inputCls} px-3 py-2 text-sm focus:outline-none rounded-md font-mono border transition-colors`;
+  const btn = dark ? "bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 text-sm font-medium rounded-md transition-colors" : "bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 text-sm font-medium rounded-md transition-colors";
+  const btnOutline = dark ? "border border-zinc-700 text-zinc-400 px-3 py-2 text-sm rounded-md hover:border-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors" : "border border-zinc-300 text-zinc-600 px-3 py-2 text-sm rounded-md hover:border-zinc-400 hover:text-zinc-800 hover:bg-zinc-50 transition-colors";
+  const dimText = dark ? "text-zinc-500" : "text-zinc-500";
+  const dimText2 = dark ? "text-zinc-600" : "text-zinc-400";
+  const dimText3 = dark ? "text-zinc-700" : "text-zinc-300";
+  const bodyText = dark ? "text-zinc-300" : "text-zinc-700";
+  const headText = dark ? "text-zinc-100" : "text-zinc-900";
+  const borderDim = dark ? "border-zinc-800" : "border-zinc-200";
+  const borderDim2 = dark ? "border-zinc-800/60" : "border-zinc-100";
 
   const tabs = [
     { id:"dashboard",   label:"Dash",        icon:"◈" },
@@ -1677,18 +1780,23 @@ function CryptoPanel() {
     { id:"leaderboard", label:"Leader",      icon:"🏅" },
     { id:"report",      label:"Report",      icon:"📄" },
     { id:"social",      label:"Social",      icon:"💬" },
+    { id:"warmacro",    label:"War/Macro",   icon:"🎖" },
+    { id:"margin",      label:"Margin",      icon:"💸" },
+    { id:"health",      label:"Health",      icon:"🩺" },
+    { id:"costbasis",   label:"Cost Basis",  icon:"💰" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
     {cat:"Dashboard", items:[{id:"dashboard",label:"Dashboard",icon:"◈"}]},
-    {cat:"Trading", items:tabs.filter(t=>["charts","robinhood","futures","bracket","templates"].includes(t.id))},
-    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","perf","pnlcal","eqcurve","attribution","journal"].includes(t.id))},
-    {cat:"Analysis", items:tabs.filter(t=>["ai","screener","analytics","patterns","montecarlo","mpt","backtest","photonics"].includes(t.id))},
-    {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel"].includes(t.id))},
-    {cat:"Markets", items:tabs.filter(t=>["quotes","watchlist","heatmap","sectors","crypto","breadth","macro","correlation"].includes(t.id))},
-    {cat:"News", items:tabs.filter(t=>["feeds","news","social","sentiment","insider","darkpool"].includes(t.id))},
-    {cat:"Planning", items:tabs.filter(t=>["plans","alerts","convictions","earnings","calendar","divs","seasonality"].includes(t.id))},
-    {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","peers","leaderboard","report","webhooks"].includes(t.id))},
+    {cat:"Charts", items:tabs.filter(t=>["charts","robinhood","quotes","watchlist","heatmap"].includes(t.id))},
+    {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment"].includes(t.id))},
+    {cat:"Photonics", items:tabs.filter(t=>["photonics","screener","analytics"].includes(t.id))},
+    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health"].includes(t.id))},
+    {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt"].includes(t.id))},
+    {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis"].includes(t.id))},
+    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro"].includes(t.id))},
+    {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality"].includes(t.id))},
+    {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates"].includes(t.id))},
   ];
 
   // Sync activeCategory when tab changes
@@ -1714,11 +1822,11 @@ function CryptoPanel() {
           {/* Progress */}
           <div className="w-72 sm:w-96 space-y-3">
             <div className="h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 progress-bar-glow transition-all duration-300 ease-out"
+              <div className="h-full rounded-full bg-blue-600 transition-all duration-300 ease-out"
                 style={{ width: `${loadProgress}%` }} />
             </div>
             <div className="flex justify-between items-center">
-              <div className="text-[11px] font-mono text-indigo-400/80 tracking-wider">
+              <div className="text-[11px] font-mono text-blue-500/80 tracking-wider">
                 {loadPhase}<span className="terminal-cursor" />
               </div>
               <div className="text-[11px] font-mono text-slate-600">{loadProgress}%</div>
@@ -1737,72 +1845,53 @@ function CryptoPanel() {
 
     <div className={`min-h-screen flex flex-col text-sm ${bg} transition-colors duration-300`}>
         <style dangerouslySetInnerHTML={{ __html: GLOBAL_STYLES }} />
-        <PersonalHeader />
-      {macro.length > 0 && <TickerTape items={macro} dark={dark} />}
+      <header className={`sticky top-0 z-40 px-5 py-2 flex items-center gap-3 ${headerBg}`} style={{borderBottom: dark ? "1px solid #27272a" : "1px solid #e4e4e7"}}>
+        <div className="flex items-center gap-3">
+          <span className={`text-sm font-semibold tracking-tight ${dark?"text-zinc-100":"text-zinc-900"}`}>JK</span>
+          <div className={`w-px h-4 ${dark?"bg-zinc-800":"bg-zinc-200"}`}/>
+        </div>
 
-      <header className={`sticky top-0 z-40 backdrop-blur-2xl px-4 sm:px-5 py-2.5 flex items-center gap-3 ${headerBg}`}>
-        <span className={`font-bold tracking-wide text-sm hidden md:inline ${dark?"text-gradient":"text-indigo-600"}`}>Terminal</span>
-        {regime && regime.regime && regime.regime !== "unknown" && (
-          <span className={`hidden md:inline-flex status-pill ${
-            regime.regime === "bull" ? (dark?"bg-emerald-500/10 text-emerald-400":"bg-emerald-50 text-emerald-600") :
-            regime.regime === "bear" ? (dark?"bg-red-500/10 text-red-400":"bg-red-50 text-red-600") :
-            regime.regime === "volatile" ? (dark?"bg-amber-500/10 text-amber-400":"bg-amber-50 text-amber-600") :
-            (dark?"bg-slate-500/10 text-slate-400":"bg-slate-100 text-slate-600")
-          }`}>
-            {regime.regime === "bull" ? "▲" : regime.regime === "bear" ? "▼" : "◆"} {regime.regime} {regime.confidence}%
-          </span>
-        )}
-
-        {/* Mobile hamburger */}
-        <button onClick={()=>setMobileNav(v=>!v)} className={`md:hidden text-lg px-1 ${dark?"text-indigo-400":"text-indigo-600"}`}>☰</button>
-
-        {/* Desktop nav — Tier 1: Category buttons */}
-        <nav className="hidden md:flex gap-1 overflow-x-auto scrollbar-hide flex-1">
+        {/* Desktop nav */}
+        <nav className="hidden md:flex gap-0.5 overflow-x-auto scrollbar-hide flex-1">
           {cats.map(c => {
             const isActive = c.cat === activeCategory;
             return (
               <button key={c.cat}
                 onClick={() => { setActiveCategory(c.cat); if (c.cat !== activeCategory || c.cat === "Dashboard") setTab(c.items[0].id); }}
-                className={`px-3 py-1.5 text-sm rounded-lg transition-all whitespace-nowrap font-semibold ${isActive?(dark?"bg-indigo-500/15 text-indigo-300 shadow-sm shadow-indigo-500/10":"bg-indigo-50 text-indigo-600"):dark?"text-slate-500 hover:text-slate-200 hover:bg-white/[0.04]":"text-slate-500 hover:text-slate-900 hover:bg-slate-100"}`}>
-                {c.cat === "Dashboard" ? "◈ Dash" : c.cat}
+                className={`px-2.5 py-1.5 text-[13px] rounded-md transition-colors whitespace-nowrap ${isActive?(dark?"bg-zinc-800 text-zinc-100 font-medium":"bg-zinc-100 text-zinc-900 font-medium"):dark?"text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50":"text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50"}`}>
+                {c.cat === "Dashboard" ? "Dashboard" : c.cat}
               </button>
             );
           })}
         </nav>
 
-        <div className="flex items-center gap-2 ml-auto shrink-0">
-          <button onClick={() => setCmdOpen(true)} className={`px-3 py-1.5 rounded-lg text-sm border transition-all hidden sm:inline-flex items-center gap-2 ${dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300 hover:border-indigo-400/30 hover:bg-indigo-400/[0.06]":"border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-300"}`}>
-            <span>Search</span><kbd className="text-[10px] opacity-50">\u2318K</kbd>
+        {/* Mobile hamburger */}
+        <button onClick={()=>setMobileNav(v=>!v)} className={`md:hidden text-lg px-1 ${dark?"text-zinc-400":"text-zinc-600"}`}>☰</button>
+
+        <div className="flex items-center gap-1.5 ml-auto shrink-0">
+          <button onClick={() => setCmdOpen(true)} className={`px-2.5 py-1 rounded-md text-[13px] transition-colors hidden sm:inline-flex items-center gap-1.5 ${dark?"text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800":"text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100"}`}>
+            <span>Search</span><kbd className="text-[10px] opacity-40">⌘K</kbd>
           </button>
-          <button onClick={() => popOutTab(tab, tabs.find(t=>t.id===tab)?.label||tab)} className={`px-2 py-1.5 rounded-lg text-sm border transition-all hidden sm:inline-flex ${dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300":"border-slate-200 text-slate-500 hover:text-indigo-600"}`} title="Pop out">
-            ⧉
+          <button onClick={() => { loadNotifications(); setShowNotifDrawer(v => !v); }} className={`relative p-1.5 rounded-md transition-colors ${dark?"text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800":"text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100"}`} title="Notifications">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            {notifCount > 0 && <span className="absolute -top-0.5 -right-0.5 w-3.5 h-3.5 bg-red-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center">{notifCount > 9 ? "9+" : notifCount}</span>}
           </button>
-          <button onClick={() => { loadNotifications(); setShowNotifDrawer(v => !v); }} className={`relative px-2 py-1.5 rounded-lg text-sm border transition-all ${dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300":"border-slate-200 text-slate-500 hover:text-indigo-600"}`} title="Notifications">
-            🔔{notifCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">{notifCount > 9 ? "9+" : notifCount}</span>}
-          </button>
-          <button onClick={startVoice} className={`px-2 py-1.5 rounded-lg text-sm border transition-all ${voiceActive?"border-red-500 text-red-400 animate-pulse":dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300":"border-slate-200 text-slate-500 hover:text-indigo-600"}`} title="Voice">
-            🎤
-          </button>
-          <button onClick={() => setShowShortcuts(true)} className={`px-2 py-1.5 rounded-lg text-sm border transition-all hidden sm:inline-flex ${dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300":"border-slate-200 text-slate-500 hover:text-indigo-600"}`} title="Shortcuts (?)">
-            ?
-          </button>
-          <button onClick={()=>{setDark(d=>{const next=!d; saveTheme(next?"dark":"light"); return next;});}} className={`px-2 py-1.5 rounded-lg text-sm border transition-all ${dark?"border-white/[0.08] text-slate-500 hover:text-indigo-300":"border-slate-200 text-slate-500 hover:text-indigo-600"}`}>
-            {dark ? "☀️" : "🌙"}
+          <button onClick={()=>{setDark(d=>{const next=!d; saveTheme(next?"dark":"light"); return next;});}} className={`p-1.5 rounded-md transition-colors ${dark?"text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800":"text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100"}`}>
+            {dark ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>}
           </button>
         </div>
       </header>
 
       {/* Desktop Tier 2 — Sub-tab bar */}
       {activeCategory !== "Dashboard" && (
-        <div className={`hidden md:block sticky top-[45px] z-30 backdrop-blur-2xl border-b ${headerBg} ${borderDim}`}
-          style={{ boxShadow: dark ? "inset 0 1px 0 rgba(255,255,255,0.04)" : "inset 0 1px 0 rgba(0,0,0,0.04)" }}>
+        <div className={`hidden md:block sticky top-[41px] z-30 border-b ${headerBg} ${borderDim}`}>
           <div key={activeCategory} className="flex gap-0.5 px-4 sm:px-5 overflow-x-auto scrollbar-hide animate-fadeIn">
             {cats.find(c => c.cat === activeCategory)?.items.map(t => (
               <button key={t.id} onClick={() => setTab(t.id)}
                 className={`px-3 py-2 text-sm whitespace-nowrap transition-all flex items-center gap-1.5 border-b-2 ${
                   tab === t.id
-                    ? (dark ? "border-indigo-400 text-indigo-300 font-semibold" : "border-indigo-500 text-indigo-600 font-semibold")
-                    : (dark ? "border-transparent text-slate-500 hover:text-slate-200 hover:border-slate-700" : "border-transparent text-slate-500 hover:text-slate-900 hover:border-slate-300")
+                    ? (dark ? "border-blue-500 text-blue-400 font-semibold" : "border-blue-600 text-blue-700 font-semibold")
+                    : (dark ? "border-transparent text-zinc-500 hover:text-zinc-200 hover:border-zinc-700" : "border-transparent text-zinc-500 hover:text-zinc-900 hover:border-zinc-300")
                 }`}>
                 <span className="opacity-60 text-sm">{t.icon}</span>{t.label}
               </button>
@@ -1813,7 +1902,7 @@ function CryptoPanel() {
 
       {/* Mobile nav drawer — categorized */}
       {mobileNav && (
-        <div className={`md:hidden border-b p-3 space-y-3 backdrop-blur-2xl ${dark?"glass-card-dark":"glass-card-light"}`}>
+        <div className={`md:hidden border-b p-3 space-y-3 ${dark?"terminal-card-dark":"terminal-card-light"}`}>
           {[
             {cat:"Core", ids:["dashboard","charts","ai","portfolio","journal"]},
             {cat:"Trading", ids:["robinhood","options","futures","bracket","screener"]},
@@ -1822,11 +1911,11 @@ function CryptoPanel() {
             {cat:"More", ids:tabs.filter(t=>!["dashboard","charts","ai","portfolio","journal","robinhood","options","futures","bracket","screener","quotes","watchlist","heatmap","news","feeds","social","analytics","backtest","perf","macro","earnings"].includes(t.id)).map(t=>t.id)},
           ].map(grp=>(
             <div key={grp.cat}>
-              <div className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 px-1 ${dark?"text-indigo-400/60":"text-indigo-500"}`}>{grp.cat}</div>
+              <div className={`text-[10px] font-bold uppercase tracking-wider mb-1.5 px-1 ${dark?"text-blue-500/60":"text-blue-600"}`}>{grp.cat}</div>
               <div className="grid grid-cols-4 gap-1">
                 {grp.ids.map(id=>{const t=tabs.find(x=>x.id===id); if(!t) return null; return (
                   <button key={t.id} onClick={()=>{setTab(t.id);setMobileNav(false);}}
-                    className={`flex flex-col items-center py-2.5 rounded-lg text-[11px] font-medium ${tab===t.id?(dark?"bg-indigo-500/15 text-indigo-300":"bg-indigo-50 text-indigo-600"):dark?"text-slate-500 hover:text-slate-200":"text-slate-600 hover:text-slate-900"}`}>
+                    className={`flex flex-col items-center py-2.5 rounded-md text-[11px] font-medium ${tab===t.id?(dark?"bg-blue-600/10 text-blue-400":"bg-blue-50 text-blue-700"):dark?"text-zinc-500 hover:text-zinc-200":"text-zinc-600 hover:text-zinc-900"}`}>
                     <span className="text-lg mb-0.5">{t.icon}</span>
                     {t.label}
                   </button>
@@ -1837,277 +1926,305 @@ function CryptoPanel() {
         </div>
       )}
 
-      <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
+      <main className="flex-1 p-3 sm:p-4 overflow-y-auto">
         <div key={tab} className="animate-tabEnter">
 
         {/* ── DASHBOARD ─────────────────────────────────────── */}
         {tab==="dashboard" && (
-          <div className="space-y-6">
-            {/* Market Intelligence Banner */}
-            {marketPulse && !marketPulse.error && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                {/* Regime */}
-                <div className={`border rounded-lg p-3 ${
-                  marketPulse.regime?.label === "BULL" ? (dark ? "border-emerald-800/60 bg-emerald-950/20" : "border-emerald-200 bg-emerald-50") :
-                  marketPulse.regime?.label === "BEAR" ? (dark ? "border-red-800/60 bg-red-950/20" : "border-red-200 bg-red-50") :
-                  marketPulse.regime?.label === "VOLATILE" ? (dark ? "border-amber-800/60 bg-amber-950/20" : "border-amber-200 bg-amber-50") :
-                  cardBg
-                }`}>
-                  <div className={`text-[11px] uppercase tracking-wider mb-1 ${dimText2}`}>Market Regime</div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-lg font-bold font-mono ${
-                      marketPulse.regime?.label === "BULL" ? "text-emerald-400" :
-                      marketPulse.regime?.label === "BEAR" ? "text-red-400" :
-                      marketPulse.regime?.label === "VOLATILE" ? "text-amber-400" : dimText
-                    }`}>{marketPulse.regime?.label || "---"}</span>
-                    <span className={`text-[10px] font-mono ${dimText2}`}>{marketPulse.regime?.confidence}% conf</span>
-                  </div>
-                  <div className={`text-[9px] font-mono mt-1 ${dimText3}`}>
-                    VIX {marketPulse.regime?.vix} · SPY vs 50d: {marketPulse.regime?.spy_vs_sma50 > 0 ? "+" : ""}{marketPulse.regime?.spy_vs_sma50}%
-                  </div>
-                </div>
-                {/* Fear & Greed Gauge */}
+          <div className="space-y-5">
+            <PersonalHeader dark={dark} />
+
+            {/* ── Portfolio Summary Bar ── */}
+            {fidelitySummary && (
+              <div className={`grid grid-cols-4 gap-3`}>
                 <div className={`border rounded-lg p-3 ${cardBg}`}>
-                  <div className={`text-[11px] uppercase tracking-wider mb-1 ${dimText2}`}>Fear & Greed Index</div>
-                  <div className="flex items-center gap-3">
-                    <svg viewBox="0 0 80 50" style={{width: 80, height: 50}}>
-                      <defs>
-                        <linearGradient id="fgGrad" x1="0" y1="0" x2="1" y2="0">
-                          <stop offset="0%" stopColor="#ef4444"/>
-                          <stop offset="25%" stopColor="#f59e0b"/>
-                          <stop offset="50%" stopColor="#fbbf24"/>
-                          <stop offset="75%" stopColor="#22c55e"/>
-                          <stop offset="100%" stopColor="#16a34a"/>
-                        </linearGradient>
-                      </defs>
-                      <path d="M 5 42 A 35 35 0 0 1 75 42" fill="none" stroke="url(#fgGrad)" strokeWidth={6} strokeLinecap="round"/>
-                      <line x1="40" y1="42" x2={40 + 30 * Math.cos(Math.PI - (marketPulse.fear_greed?.score || 50) / 100 * Math.PI)} y2={42 - 30 * Math.sin(Math.PI - (marketPulse.fear_greed?.score || 50) / 100 * Math.PI)} stroke={dark ? "#f1f1f4" : "#111"} strokeWidth={2} strokeLinecap="round"/>
-                      <circle cx="40" cy="42" r="3" fill={dark ? "#f1f1f4" : "#111"}/>
-                      <text x="40" y="36" textAnchor="middle" fontSize="14" fontWeight="800" fill={dark ? "#f1f1f4" : "#111"} fontFamily="monospace">{marketPulse.fear_greed?.score}</text>
-                    </svg>
-                    <div>
-                      <div className={`text-sm font-bold ${
-                        (marketPulse.fear_greed?.score || 50) >= 75 ? "text-emerald-400" :
-                        (marketPulse.fear_greed?.score || 50) >= 55 ? "text-green-400" :
-                        (marketPulse.fear_greed?.score || 50) >= 45 ? "text-amber-400" :
-                        (marketPulse.fear_greed?.score || 50) >= 25 ? "text-orange-400" : "text-red-400"
-                      }`}>{marketPulse.fear_greed?.label}</div>
-                      <div className={`text-[9px] font-mono ${dimText3}`}>VIX:{marketPulse.fear_greed?.components?.vix} MTM:{marketPulse.fear_greed?.components?.momentum} BRD:{marketPulse.fear_greed?.components?.breadth}</div>
-                    </div>
-                  </div>
+                  <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Portfolio Value</div>
+                  <div className={`text-lg font-semibold font-mono ${headText}`}>${fmt(fidelitySummary.total_value)}</div>
                 </div>
-                {/* VIX Spotlight */}
                 <div className={`border rounded-lg p-3 ${cardBg}`}>
-                  <div className={`text-[11px] uppercase tracking-wider mb-1 ${dimText2}`}>Volatility Index</div>
-                  <div className={`text-2xl font-bold font-mono ${
-                    (marketPulse.regime?.vix || 20) < 15 ? "text-emerald-400" :
-                    (marketPulse.regime?.vix || 20) < 22 ? "text-green-400" :
-                    (marketPulse.regime?.vix || 20) < 30 ? "text-amber-400" : "text-red-400"
-                  }`}>{marketPulse.regime?.vix || "---"}</div>
-                  <div className={`text-[9px] uppercase font-mono ${dimText3}`}>{(marketPulse.regime?.vol_regime || "").replace("_", " ")}</div>
-                  {marketPulse.yields?.spread_signal && <div className={`text-[9px] mt-1 ${dimText3}`}>Yield curve: {marketPulse.yields.spread_signal}</div>}
+                  <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Total P&L</div>
+                  <div className={`text-lg font-semibold font-mono ${clr(fidelitySummary.total_gain)}`}>{fidelitySummary.total_gain>=0?"+":""}${fmt(fidelitySummary.total_gain)}</div>
+                  <div className={`text-[10px] font-mono ${clr(fidelitySummary.total_gain_pct)}`}>{fidelitySummary.total_gain_pct>=0?"+":""}{fidelitySummary.total_gain_pct?.toFixed(2)}%</div>
+                </div>
+                <div className={`border rounded-lg p-3 ${cardBg}`}>
+                  <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Cash</div>
+                  <div className={`text-lg font-semibold font-mono ${headText}`}>${fmt(fidelitySummary.total_cash)}</div>
+                </div>
+                <div className={`border rounded-lg p-3 ${cardBg}`}>
+                  <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Market</div>
+                  {(() => {const spy = macro.find(m=>m.symbol==="SPY"); return spy ? (<>
+                    <div className={`text-lg font-semibold font-mono ${headText}`}>{fmt(spy.price)}</div>
+                    <div className={`text-[10px] font-mono ${clr(spy.change_pct)}`}>SPY {pct(spy.change_pct)}</div>
+                  </>) : <div className={`text-lg font-mono ${dimText}`}>---</div>})()}
                 </div>
               </div>
             )}
-            {/* Sector Rotation Heatmap Strip */}
-            {marketPulse?.sectors?.length > 0 && (
-              <div>
-                <div className={`text-[11px] uppercase tracking-wider mb-1.5 ${dimText2}`}>Sector Performance</div>
-                <div className="flex gap-1 flex-wrap">
-                  {marketPulse.sectors.map((s: any) => {
-                    const p = s.change_pct || 0;
-                    const intensity = Math.min(Math.abs(p), 3) / 3;
-                    return (
-                      <div key={s.symbol} className="rounded-lg px-2 py-1.5 text-center cursor-pointer hover:opacity-80 transition-opacity" style={{
-                        background: p >= 0 ? `rgba(16,185,129,${0.12 + intensity * 0.4})` : `rgba(239,68,68,${0.12 + intensity * 0.4})`,
-                        flex: "1 1 0", minWidth: 72,
-                      }}>
-                        <div className={`text-[9px] font-bold truncate ${dark?"text-zinc-300":"text-gray-700"}`}>{s.name}</div>
-                        <div className={`text-[11px] font-mono font-bold ${p >= 0 ? "text-emerald-300" : "text-red-300"}`}>{p >= 0 ? "+" : ""}{p.toFixed(2)}%</div>
-                      </div>
-                    );
-                  })}
-                </div>
+
+            {/* ── Market Indices Row ── */}
+            <div className={`border rounded-lg p-3 ${cardBg}`}>
+              <div className="flex items-center justify-between mb-2.5">
+                <span className={`text-[10px] uppercase tracking-wider font-medium ${dimText}`}>Markets</span>
+                {regime && regime.regime && regime.regime !== "unknown" && (
+                  <span className={`text-[10px] font-medium flex items-center gap-1.5 ${
+                    regime.regime === "bull" ? "text-emerald-500" : regime.regime === "bear" ? "text-red-500" : "text-amber-500"
+                  }`}>
+                    <span style={{width:5,height:5,borderRadius:"50%",background:"currentColor"}}/>
+                    {regime.regime.toUpperCase()} · {regime.confidence}%
+                  </span>
+                )}
               </div>
-            )}
-            <div>
-              <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Markets</div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                {macro.filter(m=>["SPY","QQQ","DIA","GLD","BTC-USD","NVDA"].includes(m.symbol)).map(m=><MacroCard key={m.symbol} item={m} onClick={()=>goToChart(m.symbol)} dark={dark}/>)}
-              </div>
-            </div>
-            {/* AI Morning Briefing */}
-            <div className={`border rounded-lg p-4 ${cardBg}`}>
-              <div className="flex items-center justify-between mb-3">
-                <div className={`text-xs uppercase tracking-wider ${dimText2}`}>AI Morning Briefing</div>
-                <button onClick={loadMorningBriefing} disabled={briefingLoading} className={btnOutline}>
-                  {briefingLoading ? "Loading..." : morningBriefing ? "Refresh" : "Generate Briefing"}
-                </button>
-              </div>
-              {morningBriefing && !morningBriefing.error ? (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <span className={`text-[10px] px-2 py-0.5 rounded font-bold uppercase ${
-                      morningBriefing.sentiment === "bullish" ? "bg-emerald-950/60 text-emerald-400 border border-emerald-800" :
-                      morningBriefing.sentiment === "bearish" ? "bg-red-950/60 text-red-400 border border-red-800" :
-                      morningBriefing.sentiment === "cautious" ? "bg-amber-950/60 text-amber-400 border border-amber-800" :
-                      "bg-zinc-800 text-zinc-400 border border-zinc-700"
-                    }`}>{morningBriefing.sentiment || "neutral"}</span>
-                    <span className={`text-[10px] ${dimText2}`}>{morningBriefing.date}</span>
+              <div className="grid grid-cols-6 gap-2">
+                {macro.filter(m=>["SPY","QQQ","DIA","IWM","GLD","BTC-USD"].includes(m.symbol)).map(m => (
+                  <div key={m.symbol} onClick={()=>goToChart(m.symbol)} className={`cursor-pointer rounded-md p-2 transition-colors ${dark?"hover:bg-zinc-800":"hover:bg-zinc-50"}`}>
+                    <div className={`text-[10px] font-medium ${dimText}`}>{m.label}</div>
+                    <div className={`text-sm font-mono font-semibold ${headText}`}>{m.price != null ? fmt(m.price) : "—"}</div>
+                    <div className={`text-[10px] font-mono ${clr(m.change_pct)}`}>{pct(m.change_pct)}</div>
                   </div>
-                  <p className={`text-xs leading-relaxed ${bodyText}`}>{morningBriefing.market_summary}</p>
-                  {morningBriefing.overnight_moves && morningBriefing.overnight_moves.length > 0 && (
-                    <div>
-                      <div className={`text-xs uppercase tracking-wider mb-1 ${dimText2}`}>Overnight Moves</div>
-                      <div className="flex flex-wrap gap-2">
-                        {morningBriefing.overnight_moves.map((m: any, i: number) => (
-                          <span key={i} className={`text-[10px] px-2 py-1 rounded font-mono ${m.change_pct >= 0 ? "bg-emerald-950/40 text-emerald-400" : "bg-red-950/40 text-red-400"}`}>
-                            {m.symbol} {m.change_pct >= 0 ? "+" : ""}{m.change_pct?.toFixed(2)}%
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {morningBriefing.action_items && morningBriefing.action_items.length > 0 && (
-                    <div>
-                      <div className={`text-xs uppercase tracking-wider mb-1 ${dimText2}`}>Action Items</div>
-                      <ul className="space-y-1">
-                        {morningBriefing.action_items.map((a: string, i: number) => (
-                          <li key={i} className={`text-xs ${bodyText} flex gap-2`}><span className="text-amber-400">{">"}</span> {a}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {morningBriefing.portfolio_impact && (
-                    <div className={`text-xs ${dimText} border-l-2 border-amber-500/30 pl-3`}>{morningBriefing.portfolio_impact}</div>
-                  )}
-                </div>
-              ) : morningBriefing?.error ? (
-                <div className="text-xs text-red-400">{morningBriefing.error}</div>
-              ) : !briefingLoading ? (
-                <div className={`text-xs ${dimText3} py-4 text-center`}>Click "Generate Briefing" for an AI-powered morning market analysis</div>
-              ) : null}
+                ))}
+              </div>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-6">
-              <div>
-                <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Latest News</div>
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {news.slice(0,12).map((n,i)=>(
-                    <div key={i} className={`border-b pb-2 ${borderDim2}`}>
-                      <a href={n.link} target="_blank" rel="noreferrer" className={`text-xs hover:text-amber-300 leading-snug block ${bodyText}`}>{n.title}</a>
-                      <div className="flex gap-3 mt-0.5"><span className={`text-[10px] ${dimText2}`}>{n.source}</span></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="space-y-3">
-                <div className={`border rounded-lg p-3 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Portfolio Overview</div>
-                  {/* Prefer Fidelity data (has live prices+P&L) over manual portfolio */}
-                  {fidelitySummary ? (
-                    <>
-                      <div className="flex justify-between text-xs mb-1"><span className={dimText}>Account Value</span><span className={`font-bold text-lg ${headText}`}>${fmt(fidelitySummary.total_value)}</span></div>
-                      <div className="flex justify-between text-xs mb-1"><span className={dimText}>Total P&L</span><span className={`font-bold ${clr(fidelitySummary.total_gain)}`}>{fidelitySummary.total_gain>=0?"+":""}${fmt(fidelitySummary.total_gain)} ({fidelitySummary.total_gain_pct>=0?"+":""}{fidelitySummary.total_gain_pct.toFixed(1)}%)</span></div>
-                      <div className="flex justify-between text-xs mb-3"><span className={dimText}>Cash</span><span className={`font-mono text-xs ${headText}`}>${fmt(fidelitySummary.total_cash)}</span></div>
-                      {/* Mini heatmap strip from Fidelity */}
-                      <div className={`text-xs uppercase tracking-wider mb-1 ${dimText2}`}>Holdings Heatmap</div>
-                      <div className="flex gap-0.5 mb-2 flex-wrap">
-                        {fidelityPositions.filter(p=>!p.is_option&&!p.is_cash).sort((a:any,b:any)=>(b.current_value||0)-(a.current_value||0)).slice(0,12).map((r:any) => {
-                          const p = r.total_gain_pct || 0;
-                          const intensity = Math.min(Math.abs(p), 60) / 60;
-                          const isPos = p >= 0;
-                          const weight = fidelitySummary.total_value > 0 ? ((r.current_value||0) / fidelitySummary.total_value) * 100 : 1;
-                          return (
-                            <div key={r.raw_symbol} onClick={()=>goToChart(r.symbol)}
-                              className="cursor-pointer rounded-lg px-1.5 py-1 text-center transition-transform hover:scale-110"
-                              style={{ background: isPos ? `rgba(16,185,129,${0.15+intensity*0.45})` : `rgba(239,68,68,${0.15+intensity*0.45})`,
-                                flex: `${Math.max(1, weight/3)}`,
-                                minWidth: 32 }}>
-                              <div className="text-[9px] font-bold truncate">{r.symbol}</div>
-                              <div className={`text-[8px] font-mono ${isPos?"text-emerald-300":"text-red-300"}`}>{p>=0?"+":""}{p.toFixed(0)}%</div>
-                            </div>
-                          );
-                        })}
+            {/* ── Two Column: Left (Briefing + News) / Right (Portfolio + Stats) ── */}
+            <div className="grid grid-cols-12 gap-4">
+              {/* Left Column — 7 cols */}
+              <div className="col-span-7 space-y-4">
+                {/* Market Intelligence Row */}
+                {marketPulse && !marketPulse.error && (
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className={`border rounded-lg p-3 ${cardBg}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Fear & Greed</div>
+                      <div className="flex items-baseline gap-2">
+                        <span className={`text-2xl font-bold font-mono ${
+                          (marketPulse.fear_greed?.score || 50) >= 75 ? "text-emerald-500" :
+                          (marketPulse.fear_greed?.score || 50) >= 55 ? "text-green-500" :
+                          (marketPulse.fear_greed?.score || 50) >= 45 ? "text-amber-500" :
+                          (marketPulse.fear_greed?.score || 50) >= 25 ? "text-orange-500" : "text-red-500"
+                        }`}>{marketPulse.fear_greed?.score ?? "—"}</span>
+                        <span className={`text-[10px] font-medium ${dimText}`}>{marketPulse.fear_greed?.label}</span>
                       </div>
-                      {/* Top movers from Fidelity */}
-                      <div className="mt-2 pt-2 border-t" style={{borderColor: dark?"#27272a":"#e5e7eb"}}>
-                        <div className={`text-xs uppercase tracking-wider mb-1 ${dimText2}`}>Biggest Movers</div>
-                        <div className="flex gap-1.5 flex-wrap">
-                          {fidelityPositions.filter((p:any)=>!p.is_option&&!p.is_cash&&p.total_gain_pct!=null).sort((a:any,b:any)=>Math.abs(b.total_gain_pct||0)-Math.abs(a.total_gain_pct||0)).slice(0,5).map((r:any) => (
-                            <span key={r.raw_symbol} className={`text-[10px] px-2 py-1 rounded-lg font-mono cursor-pointer hover:opacity-80 ${(r.total_gain_pct||0)>=0?(dark?"bg-emerald-950/40 text-emerald-400":"bg-emerald-50 text-emerald-700"):(dark?"bg-red-950/40 text-red-400":"bg-red-50 text-red-700")}`}
-                              onClick={()=>goToChart(r.symbol)}>
-                              {r.symbol} {(r.total_gain_pct||0)>=0?"+":""}{r.total_gain_pct?.toFixed(1)}%
+                    </div>
+                    <div className={`border rounded-lg p-3 ${cardBg}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>VIX</div>
+                      <div className={`text-2xl font-bold font-mono ${
+                        (marketPulse.regime?.vix || 20) < 15 ? "text-emerald-500" :
+                        (marketPulse.regime?.vix || 20) < 22 ? "text-green-500" :
+                        (marketPulse.regime?.vix || 20) < 30 ? "text-amber-500" : "text-red-500"
+                      }`}>{marketPulse.regime?.vix || "—"}</div>
+                      <div className={`text-[10px] ${dimText}`}>{(marketPulse.regime?.vol_regime || "").replace("_", " ")}</div>
+                    </div>
+                    <div className={`border rounded-lg p-3 ${cardBg}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Yield Curve</div>
+                      <div className={`text-sm font-medium ${headText}`}>{marketPulse.yields?.spread_signal || "Normal"}</div>
+                      {marketPulse.yields?.["10y"] && <div className={`text-[10px] font-mono mt-0.5 ${dimText}`}>10Y: {marketPulse.yields["10y"]}%</div>}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sector Performance */}
+                {marketPulse?.sectors?.length > 0 && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>Sectors</div>
+                    <div className="grid grid-cols-11 gap-1">
+                      {marketPulse.sectors.map((s: any) => {
+                        const p = s.change_pct || 0;
+                        const intensity = Math.min(Math.abs(p), 3) / 3;
+                        return (
+                          <div key={s.symbol} className="rounded px-1 py-1.5 text-center" style={{
+                            background: p >= 0 ? `rgba(34,197,94,${0.08 + intensity * 0.25})` : `rgba(239,68,68,${0.08 + intensity * 0.25})`,
+                          }}>
+                            <div className={`text-[8px] font-medium truncate ${dark?"text-zinc-400":"text-zinc-600"}`}>{s.name}</div>
+                            <div className={`text-[10px] font-mono font-semibold ${p >= 0 ? "text-emerald-500" : "text-red-500"}`}>{p >= 0 ? "+" : ""}{p.toFixed(1)}%</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Morning Briefing */}
+                {/* AI Morning Briefing */}
+                <div className={`border rounded-lg p-3 ${cardBg}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`text-[10px] uppercase tracking-wider font-medium ${dimText}`}>AI Briefing</span>
+                    <button onClick={loadMorningBriefing} disabled={briefingLoading} className={`text-[10px] px-2.5 py-1 rounded-md transition-colors ${dark?"text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800":"text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100"}`}>
+                      {briefingLoading ? "Loading..." : morningBriefing ? "Refresh" : "Generate"}
+                    </button>
+                  </div>
+                  {morningBriefing && !morningBriefing.error ? (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-medium uppercase ${
+                          morningBriefing.sentiment === "bullish" ? (dark?"bg-emerald-500/10 text-emerald-400":"bg-emerald-50 text-emerald-600") :
+                          morningBriefing.sentiment === "bearish" ? (dark?"bg-red-500/10 text-red-400":"bg-red-50 text-red-600") :
+                          (dark?"bg-amber-500/10 text-amber-400":"bg-amber-50 text-amber-600")
+                        }`}>{morningBriefing.sentiment || "neutral"}</span>
+                      </div>
+                      <p className={`text-xs leading-relaxed ${bodyText}`}>{morningBriefing.market_summary}</p>
+                      {morningBriefing.overnight_moves?.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {morningBriefing.overnight_moves.map((m: any, i: number) => (
+                            <span key={i} className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${m.change_pct >= 0 ? (dark?"bg-emerald-500/10 text-emerald-400":"bg-emerald-50 text-emerald-600") : (dark?"bg-red-500/10 text-red-400":"bg-red-50 text-red-600")}`}>
+                              {m.symbol} {m.change_pct >= 0 ? "+" : ""}{m.change_pct?.toFixed(2)}%
                             </span>
                           ))}
                         </div>
-                      </div>
-                      {/* Fidelity options summary */}
-                      {fidelityPositions.filter((p:any)=>p.is_option).length > 0 && (
-                        <div className="mt-2 pt-2 border-t" style={{borderColor: dark?"#27272a":"#e5e7eb"}}>
-                          <div className={`text-xs uppercase tracking-wider mb-1 ${dimText2}`}>Options ({fidelityPositions.filter((p:any)=>p.is_option).length})</div>
-                          <div className="flex gap-2 text-[10px]">
-                            <span className={dimText}>Value: <span className={headText}>${fmt(fidelityPositions.filter((p:any)=>p.is_option).reduce((s:number,o:any)=>s+(o.current_value||0),0))}</span></span>
-                            <span className={dimText}>P&L: <span className={clr(fidelityPositions.filter((p:any)=>p.is_option).reduce((s:number,o:any)=>s+(o.total_gain_dollar||0),0))}>${fmt(Math.abs(fidelityPositions.filter((p:any)=>p.is_option).reduce((s:number,o:any)=>s+(o.total_gain_dollar||0),0)))}</span></span>
-                          </div>
+                      )}
+                      {morningBriefing.action_items?.length > 0 && (
+                        <div className="space-y-1">
+                          {morningBriefing.action_items.map((a: string, i: number) => (
+                            <div key={i} className={`text-xs ${bodyText} flex gap-2 items-start`}>
+                              <span className={`${dimText} mt-0.5`}>-</span>
+                              <span>{a}</span>
+                            </div>
+                          ))}
                         </div>
                       )}
-                      {fidelityFreshness?.has_data && (
-                        <div className={`mt-2 pt-2 border-t text-[10px] flex justify-between ${dimText}`} style={{borderColor: dark?"#27272a":"#e5e7eb"}}>
-                          <span>Fidelity · {fidelityFreshness.age_minutes < 60 ? `${Math.round(fidelityFreshness.age_minutes)}m ago` : fidelityFreshness.age_minutes < 1440 ? `${Math.round(fidelityFreshness.age_minutes/60)}h ago` : `${Math.round(fidelityFreshness.age_minutes/1440)}d ago`}</span>
-                          <button onClick={()=>loadFidelityPositions(true)} className="hover:text-emerald-400 transition-colors">↻ Sync</button>
-                        </div>
+                      {morningBriefing.portfolio_impact && (
+                        <div className={`text-xs ${dimText} border-l-2 pl-3 ${dark?"border-zinc-700":"border-zinc-200"}`}>{morningBriefing.portfolio_impact}</div>
                       )}
-                    </>
-                  ) : fidelityLoading ? (
-                    <div className={`text-xs animate-pulse py-6 text-center ${dimText}`}>Loading Fidelity portfolio...</div>
-                  ) : (
-                    <div className={`text-xs py-6 text-center ${dimText}`}>
-                      <div className="mb-2">No portfolio data available</div>
-                      <button onClick={()=>loadFidelityPositions(true)} className={`text-[10px] px-3 py-1 rounded-lg border ${dark?"border-emerald-800 text-emerald-400 hover:bg-emerald-950/30":"border-emerald-300 text-emerald-600 hover:bg-emerald-50"}`}>Load Fidelity Data</button>
                     </div>
-                  )}
+                  ) : morningBriefing?.error ? (
+                    <div className="text-xs text-red-500">{morningBriefing.error}</div>
+                  ) : !briefingLoading ? (
+                    <div className={`text-xs ${dimText} py-3 text-center`}>Generate an AI morning briefing</div>
+                  ) : null}
                 </div>
+
+                {/* Latest News */}
+                <div className={`border rounded-lg p-3 ${cardBg}`}>
+                  <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>News</div>
+                  <div className="space-y-1.5 max-h-72 overflow-y-auto">
+                    {news.slice(0,10).map((n,i)=>(
+                      <a key={i} href={n.link} target="_blank" rel="noreferrer" className={`block text-xs leading-snug py-1.5 border-b transition-colors ${dark?"border-zinc-800 hover:text-blue-400":"border-zinc-100 hover:text-blue-600"} ${bodyText}`}>
+                        {n.title}
+                        <span className={`text-[10px] ml-2 ${dimText}`}>{n.source}</span>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column — 5 cols */}
+              <div className="col-span-5 space-y-4">
+                {/* Holdings Heatmap */}
+                {fidelityPositions.filter((p:any)=>!p.is_option&&!p.is_cash).length > 0 && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>Holdings</div>
+                    <div className="flex gap-0.5 flex-wrap">
+                      {fidelityPositions.filter((p:any)=>!p.is_option&&!p.is_cash).sort((a:any,b:any)=>(b.current_value||0)-(a.current_value||0)).slice(0,14).map((r:any) => {
+                        const p = r.total_gain_pct || 0;
+                        const intensity = Math.min(Math.abs(p), 60) / 60;
+                        const isPos = p >= 0;
+                        const weight = fidelitySummary?.total_value > 0 ? ((r.current_value||0) / fidelitySummary.total_value) * 100 : 1;
+                        return (
+                          <div key={r.raw_symbol} onClick={()=>goToChart(r.symbol)}
+                            className="cursor-pointer rounded px-1.5 py-1 text-center transition-opacity hover:opacity-80"
+                            style={{ background: isPos ? `rgba(34,197,94,${0.08+intensity*0.3})` : `rgba(239,68,68,${0.08+intensity*0.3})`,
+                              flex: `${Math.max(1, weight/3)}`, minWidth: 36 }}>
+                            <div className={`text-[9px] font-medium truncate ${dark?"text-zinc-300":"text-zinc-700"}`}>{r.symbol}</div>
+                            <div className={`text-[9px] font-mono ${isPos?"text-emerald-500":"text-red-500"}`}>{p>=0?"+":""}{p.toFixed(1)}%</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {/* Biggest Movers */}
+                    <div className={`mt-2.5 pt-2.5 border-t ${borderDim}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1.5 font-medium ${dimText}`}>Movers</div>
+                      <div className="space-y-1">
+                        {fidelityPositions.filter((p:any)=>!p.is_option&&!p.is_cash&&p.total_gain_pct!=null).sort((a:any,b:any)=>Math.abs(b.total_gain_pct||0)-Math.abs(a.total_gain_pct||0)).slice(0,5).map((r:any) => (
+                          <div key={r.raw_symbol} onClick={()=>goToChart(r.symbol)} className={`flex items-center justify-between text-xs cursor-pointer py-0.5 transition-colors ${dark?"hover:text-zinc-100":"hover:text-zinc-900"}`}>
+                            <span className={`font-mono font-medium ${headText}`}>{r.symbol}</span>
+                            <span className={`font-mono ${clr(r.total_gain_pct)}`}>{(r.total_gain_pct||0)>=0?"+":""}{r.total_gain_pct?.toFixed(2)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Options */}
+                    {fidelityPositions.filter((p:any)=>p.is_option).length > 0 && (
+                      <div className={`mt-2.5 pt-2.5 border-t ${borderDim}`}>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className={dimText}>Options ({fidelityPositions.filter((p:any)=>p.is_option).length})</span>
+                          <span className={headText}>${fmt(fidelityPositions.filter((p:any)=>p.is_option).reduce((s:number,o:any)=>s+(o.current_value||0),0))}</span>
+                        </div>
+                      </div>
+                    )}
+                    {fidelityFreshness?.has_data && (
+                      <div className={`mt-2 pt-2 border-t text-[10px] flex justify-between ${dimText} ${borderDim}`}>
+                        <span>Fidelity · {fidelityFreshness.age_minutes < 60 ? `${Math.round(fidelityFreshness.age_minutes)}m ago` : fidelityFreshness.age_minutes < 1440 ? `${Math.round(fidelityFreshness.age_minutes/60)}h ago` : `${Math.round(fidelityFreshness.age_minutes/1440)}d ago`}</span>
+                        <button onClick={()=>loadFidelityPositions(true)} className={`transition-colors ${dark?"hover:text-zinc-200":"hover:text-zinc-700"}`}>Sync</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Sector Allocation */}
                 {sectorBreakdown?.sectors?.length > 0 && (
                   <div className={`border rounded-lg p-3 ${cardBg}`}>
-                    <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Sector Allocation</div>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>Allocation</div>
                     <div className="space-y-1.5">
                       {sectorBreakdown.sectors.slice(0,6).map((s: any) => (
                         <div key={s.name} className="flex items-center gap-2">
-                          <div className={`text-[10px] w-24 truncate ${dimText}`}>{s.name}</div>
-                          <div className="flex-1 h-2 rounded-full overflow-hidden" style={{background: dark ? "#1a1a2e" : "#e5e7eb"}}>
+                          <div className={`text-[10px] w-20 truncate ${dimText}`}>{s.name}</div>
+                          <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{background: dark ? "#27272a" : "#e5e7eb"}}>
                             <div className="h-full rounded-full transition-all" style={{width: `${s.pct}%`, background: s.color}} />
                           </div>
-                          <div className={`text-[10px] font-mono w-12 text-right ${headText}`}>{s.pct}%</div>
+                          <div className={`text-[10px] font-mono w-10 text-right ${headText}`}>{s.pct}%</div>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
-                <div className={`border rounded-lg p-3 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Trade Journal</div>
-                  <div className="flex gap-4 text-xs">
-                    <span className={dimText}>Open: <span className="text-amber-400 font-bold">{tradeStats.open_trades||0}</span></span>
-                    <span className={dimText}>Win: <span className="text-emerald-400 font-bold">{tradeStats.win_rate||0}%</span></span>
-                    <span className={dimText}>P&L: <span className={clr(tradeStats.total_pnl)}>${fmt(tradeStats.total_pnl||0)}</span></span>
-                  </div>
-                </div>
-                {rhStatus?.logged_in && rhPortfolio && (
+
+                {/* Quick Stats */}
+                <div className="grid grid-cols-2 gap-3">
                   <div className={`border rounded-lg p-3 ${cardBg}`}>
-                    <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>🪶 Robinhood</div>
-                    <div className="flex justify-between text-xs"><span className={dimText}>Equity</span><span className={`font-bold ${headText}`}>${fmt(rhPortfolio.equity)}</span></div>
-                    <div className="flex justify-between text-xs"><span className={dimText}>Cash</span><span className={headText}>${fmt(rhPortfolio.cash)}</span></div>
+                    <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Journal</div>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between"><span className={dimText}>Open</span><span className={headText}>{tradeStats.open_trades||0}</span></div>
+                      <div className="flex justify-between"><span className={dimText}>Win Rate</span><span className="text-emerald-500 font-medium">{tradeStats.win_rate||0}%</span></div>
+                      <div className="flex justify-between"><span className={dimText}>P&L</span><span className={clr(tradeStats.total_pnl)}>${fmt(tradeStats.total_pnl||0)}</span></div>
+                    </div>
                   </div>
-                )}
-                {/* ── Goals Tracker ── */}
-                <div className={`border rounded-lg p-3 ${cardBg}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <div className={`text-xs uppercase tracking-wider ${dimText2}`}>🎯 Goals</div>
-                    <button onClick={()=>setShowGoalForm(!showGoalForm)} className={`text-[10px] px-2 py-0.5 rounded ${dark?"bg-zinc-800 text-zinc-400 hover:bg-zinc-700":"bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>{showGoalForm?"Cancel":"+ Add"}</button>
-                  </div>
-                  {showGoalForm && (
-                    <div className="space-y-1.5 mb-3 pb-3 border-b" style={{borderColor:dark?"#27272a":"#e5e7eb"}}>
+                  {rhStatus?.logged_in && rhPortfolio ? (
+                    <div className={`border rounded-lg p-3 ${cardBg}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Robinhood</div>
+                      <div className="space-y-1 text-xs">
+                        <div className="flex justify-between"><span className={dimText}>Equity</span><span className={headText}>${fmt(rhPortfolio.equity)}</span></div>
+                        <div className="flex justify-between"><span className={dimText}>Cash</span><span className={headText}>${fmt(rhPortfolio.cash)}</span></div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`border rounded-lg p-3 ${cardBg}`}>
+                      <div className={`text-[10px] uppercase tracking-wider mb-1 font-medium ${dimText}`}>Goals</div>
+                      {goals.length > 0 ? (
+                        <div className="space-y-1.5">
+                          {goals.slice(0,2).map((g: any) => {
+                            const current = g.current_amount || 0;
+                            const target = g.target_amount || 1;
+                            const p = Math.min((current / target) * 100, 100);
+                            return (
+                              <div key={g.id}>
+                                <div className={`text-[10px] ${headText} mb-0.5`}>{g.name}</div>
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex-1 h-1 rounded-full overflow-hidden" style={{background:dark?"#27272a":"#e5e7eb"}}>
+                                    <div className={`h-full rounded-full ${p>=100?"bg-emerald-500":"bg-blue-500"}`} style={{width:`${p}%`}}/>
+                                  </div>
+                                  <span className={`text-[9px] font-mono ${dimText}`}>{p.toFixed(0)}%</span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : <div className={`text-[10px] ${dimText}`}>No goals set</div>}
+                      <button onClick={()=>setShowGoalForm(!showGoalForm)} className={`text-[10px] mt-1.5 ${dark?"text-blue-400":"text-blue-600"}`}>{showGoalForm?"Cancel":"+ Add goal"}</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Goals Form (hidden by default) */}
+                {showGoalForm && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className="space-y-1.5">
                       <input value={goalForm.name} onChange={e=>setGoalForm({...goalForm,name:e.target.value})} placeholder="Goal name" className={`w-full text-xs ${input}`} />
                       <div className="flex gap-1.5">
                         <input value={goalForm.target_amount} onChange={e=>setGoalForm({...goalForm,target_amount:e.target.value})} placeholder="Target $" type="number" className={`flex-1 text-xs ${input}`} />
@@ -2118,41 +2235,10 @@ function CryptoPanel() {
                           <option value="savings">Savings</option>
                         </select>
                       </div>
-                      <button onClick={addGoal} className={`w-full text-xs py-1.5 rounded-lg font-bold ${dark?"bg-amber-600 hover:bg-amber-500 text-black":"bg-blue-600 hover:bg-blue-500 text-white"}`}>Add Goal</button>
+                      <button onClick={addGoal} className={`w-full text-xs py-1.5 rounded-md font-medium ${btn}`}>Add Goal</button>
                     </div>
-                  )}
-                  {goals.length === 0 ? (
-                    <div className={`text-[10px] ${dimText3}`}>No goals set. Add one to track progress.</div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {goals.map((g: any) => {
-                        const current = g.current_amount || 0;
-                        const target = g.target_amount || 1;
-                        const pct = Math.min((current / target) * 100, 100);
-                        const typeIcon = g.type === "portfolio_value" ? "📈" : g.type === "monthly_income" ? "💰" : g.type === "win_rate" ? "🏆" : "🏦";
-                        const isComplete = pct >= 100;
-                        return (
-                          <div key={g.id}>
-                            <div className="flex items-center justify-between mb-1">
-                              <span className={`text-[11px] font-medium ${headText}`}>{typeIcon} {g.name}</span>
-                              <button onClick={()=>deleteGoal(g.id)} className={`text-[9px] ${dimText3} hover:text-red-400`} title="Remove">✕</button>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex-1 h-2 rounded-full overflow-hidden" style={{background:dark?"#27272a":"#e5e7eb"}}>
-                                <div className={`h-full rounded-full transition-all duration-500 ${isComplete?"bg-emerald-400":dark?"bg-amber-400":"bg-blue-500"}`} style={{width:`${pct}%`}}/>
-                              </div>
-                              <span className={`text-[10px] font-mono w-12 text-right ${isComplete?"text-emerald-400":dimText}`}>{pct.toFixed(0)}%</span>
-                            </div>
-                            <div className="flex justify-between mt-0.5">
-                              <span className={`text-[9px] ${dimText3}`}>${fmt(current)}</span>
-                              <span className={`text-[9px] ${dimText3}`}>${fmt(target)}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -2168,7 +2254,7 @@ function CryptoPanel() {
           <div>
             {/* AI Sub-tabs */}
             <div className="flex gap-1 mb-4 flex-wrap">
-              {([["analysis","🧠 Analysis"],["chat","💬 Chat"],["rebalance","⚖️ Rebal"],["earnsummary","📊 Earnings"],["coach","🎓 Coach"],["scanner","🔍 Scanner"],["riskalerts","⚠️ Risk"],["senttime","📈 SentTime"],["predict","🤖 Predict"],["deepreview","📓 DeepReview"],["doctor","🩺 Doctor"],["narrative","📖 Narrative"]] as [string,string][]).map(([key,label])=>(
+              {([["analysis","🧠 Analysis"],["chat","💬 Chat"],["deepdive","🔬 Deep Dive"],["rebalance","⚖️ Rebal"],["earnsummary","📊 Earnings"],["coach","🎓 Coach"],["scanner","🔍 Scanner"],["riskalerts","⚠️ Risk"],["senttime","📈 SentTime"],["predict","🤖 Predict"],["deepreview","📓 DeepReview"],["doctor","🩺 Doctor"],["narrative","📖 Narrative"]] as [string,string][]).map(([key,label])=>(
                 <button key={key} onClick={()=>{setAiSubTab(key as any);setAiSubTab2(key as any);}} className={`px-3 py-1.5 text-[10px] rounded-lg ${aiSubTab2===key?(dark?"bg-violet-600 text-white font-bold":"bg-blue-600 text-white font-bold"):`border ${dark?"border-zinc-700 text-zinc-400":"border-gray-300 text-gray-500"}`}`}>{label}</button>
               ))}
             </div>
@@ -2210,6 +2296,57 @@ function CryptoPanel() {
             )}
             {aiSubTab2==="chat" && (
               <AIChat dark={dark} BASE={BASE} />
+            )}
+            {aiSubTab2==="deepdive" && (
+              <div className="space-y-4 max-w-4xl">
+                <div className={`text-xs uppercase tracking-wider ${dimText2}`}>Nemeth-Style Deep Dive (7-Layer Framework)</div>
+                <div className="flex gap-2">
+                  <input value={ddTicker} onChange={e=>setDdTicker(e.target.value.toUpperCase())} onKeyDown={e=>e.key==="Enter"&&runDeepDive()} placeholder="Enter ticker..." className={`px-3 py-2 rounded-lg text-sm font-mono ${dark?"bg-zinc-800 border-zinc-700 text-white":"bg-white border-gray-300 text-gray-900"} border`} style={{width:140}} />
+                  <button onClick={()=>runDeepDive()} disabled={ddLoading} className={`px-4 py-2 rounded-lg text-xs font-bold ${dark?"bg-violet-600 text-white":"bg-blue-600 text-white"}`}>{ddLoading?"Analyzing...":"Run Deep Dive"}</button>
+                </div>
+                {ddLoading && <div className={`text-sm ${dimText}`}>Running 7-layer analysis with Claude... this may take 30-60 seconds.</div>}
+                {ddResult && !ddResult.parse_error && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <span className="text-xl font-bold font-mono">{ddResult.name || ddResult.ticker}</span>
+                      <span className={`text-sm font-mono ${dark?"text-zinc-400":"text-gray-500"}`}>${ddResult.price}</span>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded ${(ddResult.pct_3m||0)>=0?(dark?"bg-green-900 text-green-300":"bg-green-100 text-green-700"):(dark?"bg-red-900 text-red-300":"bg-red-100 text-red-700")}`}>{ddResult.pct_3m>=0?"+":""}{ddResult.pct_3m}% 3mo</span>
+                      {ddResult.cohr_score && <span className={`text-xs font-bold px-2 py-0.5 rounded ${dark?"bg-violet-900 text-violet-300":"bg-violet-100 text-violet-700"}`}>COHR Score: {ddResult.cohr_score}/7</span>}
+                      {ddResult.conviction && <span className={`text-xs font-bold px-2 py-0.5 rounded ${ddResult.conviction==="high"?(dark?"bg-green-900 text-green-300":"bg-green-100 text-green-700"):ddResult.conviction==="low"?(dark?"bg-red-900 text-red-300":"bg-red-100 text-red-700"):(dark?"bg-yellow-900 text-yellow-300":"bg-yellow-100 text-yellow-700")}`}>{ddResult.conviction} conviction</span>}
+                    </div>
+                    {ddResult.verdict && <div className={`text-sm p-3 rounded-lg ${dark?"bg-zinc-800 border-zinc-700":"bg-blue-50 border-blue-200"} border`}>{ddResult.verdict}</div>}
+                    {ddResult.layers?.map((layer:any, i:number)=>(
+                      <details key={i} className={`rounded-lg border ${dark?"border-zinc-700 bg-zinc-800/50":"border-gray-200 bg-white"}`}>
+                        <summary className={`px-4 py-3 cursor-pointer text-sm font-bold ${dark?"text-white":"text-gray-900"}`}>{i+1}. {layer.name}</summary>
+                        <div className={`px-4 pb-4 text-sm whitespace-pre-wrap ${dark?"text-zinc-300":"text-gray-700"}`}>{layer.analysis}</div>
+                      </details>
+                    ))}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className={`p-4 rounded-lg border ${dark?"border-green-800 bg-green-900/20":"border-green-200 bg-green-50"}`}>
+                        <div className={`text-xs font-bold uppercase mb-2 ${dark?"text-green-400":"text-green-700"}`}>Bull Case</div>
+                        {ddResult.bull_case?.map((b:string,i:number)=><div key={i} className={`text-sm mb-1 ${dark?"text-green-300":"text-green-800"}`}>+ {b}</div>)}
+                      </div>
+                      <div className={`p-4 rounded-lg border ${dark?"border-red-800 bg-red-900/20":"border-red-200 bg-red-50"}`}>
+                        <div className={`text-xs font-bold uppercase mb-2 ${dark?"text-red-400":"text-red-700"}`}>Bear Case</div>
+                        {ddResult.bear_case?.map((b:string,i:number)=><div key={i} className={`text-sm mb-1 ${dark?"text-red-300":"text-red-800"}`}>- {b}</div>)}
+                      </div>
+                    </div>
+                    {ddResult.catalysts?.length > 0 && (
+                      <div className={`p-4 rounded-lg border ${dark?"border-zinc-700 bg-zinc-800/50":"border-gray-200 bg-white"}`}>
+                        <div className={`text-xs font-bold uppercase mb-2 ${dimText2}`}>Catalysts</div>
+                        {ddResult.catalysts.map((c:any,i:number)=><div key={i} className={`text-sm mb-1 flex gap-2 ${dark?"text-zinc-300":"text-gray-700"}`}><span className="font-mono text-xs text-blue-400">{c.timeline}</span> {c.event}</div>)}
+                      </div>
+                    )}
+                    {ddResult.key_risks?.length > 0 && (
+                      <div className={`p-4 rounded-lg border ${dark?"border-yellow-800 bg-yellow-900/20":"border-yellow-200 bg-yellow-50"}`}>
+                        <div className={`text-xs font-bold uppercase mb-2 ${dark?"text-yellow-400":"text-yellow-700"}`}>Key Risks</div>
+                        {ddResult.key_risks.map((r:string,i:number)=><div key={i} className={`text-sm mb-1 ${dark?"text-yellow-300":"text-yellow-800"}`}>{i+1}. {r}</div>)}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {ddResult?.parse_error && <div className={`text-sm whitespace-pre-wrap ${dark?"text-zinc-300":"text-gray-700"}`}>{ddResult.raw_analysis}</div>}
+              </div>
             )}
             {aiSubTab2==="rebalance" && (
               <div className="space-y-4 max-w-3xl">
@@ -2915,10 +3052,10 @@ function CryptoPanel() {
               const photonicsUniverse = PHOTONICS_UNIVERSE.length;
               const pctOfPortfolio = fidelitySummary.total_value > 0 ? (photonicsValue / fidelitySummary.total_value * 100) : 0;
               return photonicsCount > 0 ? (
-                <div className={`border rounded-lg p-3 ${cardBg} cursor-pointer hover:border-indigo-500/30 transition-all`} onClick={() => { setTab("photonics"); }}>
+                <div className={`border rounded-lg p-3 ${cardBg} cursor-pointer hover:border-blue-600/30 transition-all`} onClick={() => { setTab("photonics"); }}>
                   <div className="flex items-center justify-between mb-2">
                     <div className={`text-xs uppercase tracking-wider ${dimText2}`}>🔬 Photonics Allocation</div>
-                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${dark ? "bg-indigo-950/40 text-indigo-400" : "bg-indigo-50 text-indigo-600"}`}>{photonicsCount}/{photonicsUniverse} universe</span>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full ${dark ? "bg-blue-950/40 text-blue-500" : "bg-blue-50 text-blue-700"}`}>{photonicsCount}/{photonicsUniverse} universe</span>
                   </div>
                   <div className={`text-lg font-bold font-mono ${headText}`}>${fmt(photonicsValue)}</div>
                   <div className={`text-[10px] ${dimText}`}>{pctOfPortfolio.toFixed(1)}% of portfolio</div>
@@ -5181,7 +5318,7 @@ function CryptoPanel() {
 
         {/* ── PHOTONICS COMMAND CENTER ──────────────────────── */}
         {tab==="photonics" && (
-          <div ><div style={{background:"#0a0a0f",color:"#f1f1f4",minHeight:"100%",borderRadius:8}}><PhotonicsCenter /></div></div>
+          <div><PhotonicsCenter dark={dark} /></div>
         )}
 
         {/* ── CRYPTO ─────────────────────────────────────────── */}
@@ -6459,80 +6596,44 @@ function CryptoPanel() {
 
             {/* Sub-tab buttons */}
             <div className="flex gap-2">
-              {(["discord","twitter","substack","serenity"] as const).map(st=>(
-                <button key={st} onClick={()=>setSocialSubTab(st)} className={`px-4 py-1.5 text-xs rounded-lg font-bold uppercase tracking-wider transition-all ${socialSubTab===st?(st==="discord"?"bg-indigo-600 text-white":st==="twitter"?"bg-sky-600 text-white":st==="serenity"?"bg-violet-600 text-white":"bg-orange-600 text-white"):btnOutline}`}>{st==="discord"?"Discord":st==="twitter"?"Twitter / X":st==="serenity"?"Serenity":"Substack"}</button>
+              {(["discord","twitter","substack","serenity","signals"] as const).map(st=>(
+                <button key={st} onClick={()=>setSocialSubTab(st)} className={`relative px-4 py-1.5 text-xs rounded-lg font-bold uppercase tracking-wider transition-all ${socialSubTab===st?(st==="discord"?"bg-blue-700 text-white":st==="twitter"?"bg-sky-600 text-white":st==="serenity"?"bg-violet-600 text-white":st==="signals"?"bg-amber-600 text-white":"bg-orange-600 text-white"):btnOutline}`}>
+                  {st==="discord"?"Discord":st==="twitter"?"Twitter / X":st==="serenity"?"Serenity":st==="signals"?"Signals":"Substack"}
+                  {st==="signals" && signalNewCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center text-[9px] font-bold bg-amber-500 text-white rounded-full px-1 shadow-lg animate-pulse">{signalNewCount}</span>
+                  )}
+                </button>
               ))}
             </div>
 
             {/* ── Discord Sub-tab ── */}
             {socialSubTab==="discord" && (
-              <div className="grid lg:grid-cols-3 gap-4">
-                {/* Presence Card */}
+              <div className="space-y-4">
+                {/* Mispriced Assets Server Embed */}
                 <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>Presence</div>
-                  {discordPresenceLoading && !discordPresence ? (
-                    <div className={`text-xs ${dimText}`}>Loading presence...</div>
-                  ) : discordPresence?.error ? (
-                    <div className="space-y-3">
-                      <div className={`text-xs ${dimText}`}>{discordPresence.error}</div>
-                      <div className={`border rounded-lg p-3 ${dark?"bg-indigo-950/30 border-indigo-800/40":"bg-indigo-50 border-indigo-200"}`}>
-                        <div className={`text-[10px] font-bold uppercase tracking-widest mb-2 text-indigo-400`}>Discord Bot Setup</div>
-                        <ol className={`text-[10px] ${bodyText} space-y-1.5 list-decimal list-inside`}>
-                          <li>Create app at discord.com/developers/applications</li>
-                          <li>Add Bot, enable Message Content Intent, copy token</li>
-                          <li>OAuth2 → scope: bot, perms: Read Messages + History → invite</li>
-                          <li>Copy Channel ID → <code className="text-amber-400">DISCORD_CHANNEL_ID</code></li>
-                          <li>Copy User ID → <code className="text-amber-400">DISCORD_USER_ID</code></li>
-                          <li>Join Lanyard Discord (discord.gg/lanyard) for presence</li>
-                          <li>Add vars to <code className="text-amber-400">services/api/.env</code>, restart API</li>
-                        </ol>
-                      </div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <div className={`text-sm font-bold ${headText}`}>Mispriced Assets</div>
+                      <div className={`text-[10px] mt-0.5 ${dimText}`}>Live Discord server feed</div>
                     </div>
-                  ) : discordPresence ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-3">
-                        {discordPresence.avatar_url && <img src={discordPresence.avatar_url} className="w-10 h-10 rounded-full" alt="avatar" />}
-                        <div>
-                          <div className={`text-sm font-bold ${headText}`}>{discordPresence.username || "Unknown"}</div>
-                          <div className="flex items-center gap-1.5">
-                            <span className={`w-2.5 h-2.5 rounded-full ${discordPresence.status==="online"?"bg-emerald-400":discordPresence.status==="idle"?"bg-yellow-400":discordPresence.status==="dnd"?"bg-red-400":"bg-zinc-500"}`}></span>
-                            <span className={`text-[10px] capitalize ${dimText}`}>{discordPresence.status || "offline"}</span>
-                          </div>
-                        </div>
-                      </div>
-                      {discordPresence.custom_status && <div className={`text-xs ${bodyText}`}>💬 {discordPresence.custom_status}</div>}
-                      {discordPresence.activities?.length > 0 && (
-                        <div className="space-y-1.5">
-                          <div className={`text-xs uppercase tracking-wider ${dimText2}`}>Activities</div>
-                          {discordPresence.activities.map((a:any,i:number)=>(
-                            <div key={i} className={`text-xs ${bodyText}`}>
-                              🎮 <span className="font-semibold">{a.name}</span>{a.details ? ` — ${a.details}` : ""}{a.state ? ` (${a.state})` : ""}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {discordPresence.spotify && (
-                        <div className={`border rounded-lg p-2.5 flex items-center gap-2.5 ${dark?"bg-emerald-950/20 border-emerald-800/30":"bg-emerald-50 border-emerald-200"}`}>
-                          {discordPresence.spotify.album_art_url && <img src={discordPresence.spotify.album_art_url} className="w-10 h-10 rounded" alt="album" />}
-                          <div>
-                            <div className={`text-xs font-bold text-emerald-400`}>🎵 {discordPresence.spotify.song}</div>
-                            <div className={`text-[10px] ${dimText}`}>{discordPresence.spotify.artist}</div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className={`text-xs ${dimText}`}>No presence data</div>
-                  )}
+                    <a href="https://discord.com/channels/1468333686884663326/1468333686884663329" target="_blank" rel="noreferrer" className={`text-[10px] px-2.5 py-1 rounded-md transition-colors ${dark?"text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800":"text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100"}`}>Open in Discord</a>
+                  </div>
+                  <iframe
+                    src={`https://discord.com/widget?id=1468333686884663326&theme=${dark?"dark":"light"}`}
+                    width="100%"
+                    height="500"
+                    sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
+                    className="rounded-lg border-0"
+                    title="Mispriced Assets Discord"
+                  />
+                  <div className={`text-[10px] mt-2 ${dimText}`}>If the widget doesn&apos;t load, the server admin needs to enable the Server Widget in Discord settings.</div>
                 </div>
 
-                {/* Channel Feed */}
-                <div className={`border rounded-lg p-4 lg:col-span-2 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>Channel Feed</div>
-                  {discordFeedLoading && discordFeed.length === 0 ? (
-                    <div className={`text-xs ${dimText}`}>Loading messages...</div>
-                  ) : discordFeed.length > 0 ? (
-                    <div className="space-y-2 max-h-[600px] overflow-y-auto scrollbar-hide">
+                {/* Bot Feed (when bot is invited) */}
+                {discordFeed.length > 0 && (
+                  <div className={`border rounded-lg p-4 ${cardBg}`}>
+                    <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>Bot Channel Feed</div>
+                    <div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-hide">
                       {discordFeed.map((m:any)=>(
                         <div key={m.id} className={`border-b pb-2 last:border-0 ${borderDim2}`}>
                           <div className="flex items-center gap-2 mb-0.5">
@@ -6541,101 +6642,553 @@ function CryptoPanel() {
                             <span className={`text-[9px] ${dimText}`}>{m.timestamp ? new Date(m.timestamp).toLocaleString() : ""}</span>
                           </div>
                           <div className={`text-xs ${bodyText} pl-7`}>{m.content}</div>
-                          {m.attachments?.length > 0 && (
-                            <div className="pl-7 mt-1 flex gap-1 flex-wrap">
-                              {m.attachments.map((att:any,ai:number)=>(
-                                <span key={ai} className={`text-[9px] px-1.5 py-0.5 rounded ${dark?"bg-zinc-800 text-zinc-400":"bg-gray-100 text-gray-500"}`}>📎 {att.filename || "file"}</span>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <div className={`text-xs ${dimText}`}>Configure Discord bot to see channel activity</div>
-                  )}
-                </div>
+                  </div>
+                )}
+
+                {/* Presence */}
+                {discordPresence && !discordPresence.error && (
+                  <div className={`border rounded-lg p-4 ${cardBg}`}>
+                    <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>Your Presence</div>
+                    <div className="flex items-center gap-3">
+                      {discordPresence.avatar_url && <img src={discordPresence.avatar_url} className="w-10 h-10 rounded-full" alt="avatar" />}
+                      <div>
+                        <div className={`text-sm font-bold ${headText}`}>{discordPresence.username || "Unknown"}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`w-2.5 h-2.5 rounded-full ${discordPresence.status==="online"?"bg-emerald-400":discordPresence.status==="idle"?"bg-yellow-400":discordPresence.status==="dnd"?"bg-red-400":"bg-zinc-500"}`}></span>
+                          <span className={`text-[10px] capitalize ${dimText}`}>{discordPresence.status || "offline"}</span>
+                        </div>
+                      </div>
+                    </div>
+                    {discordPresence.spotify && (
+                      <div className={`mt-3 border rounded-lg p-2.5 flex items-center gap-2.5 ${dark?"bg-emerald-950/20 border-emerald-800/30":"bg-emerald-50 border-emerald-200"}`}>
+                        {discordPresence.spotify.album_art_url && <img src={discordPresence.spotify.album_art_url} className="w-10 h-10 rounded" alt="album" />}
+                        <div>
+                          <div className={`text-xs font-bold text-emerald-400`}>🎵 {discordPresence.spotify.song}</div>
+                          <div className={`text-[10px] ${dimText}`}>{discordPresence.spotify.artist}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
             {/* ── Twitter / X Sub-tab ── */}
             {socialSubTab==="twitter" && (
               <div className="space-y-4">
-                {/* Profile Header */}
-                <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold ${dark?"bg-sky-950 text-sky-400":"bg-sky-100 text-sky-600"}`}>𝕏</div>
-                      <div>
-                        <div className={`text-sm font-bold ${headText}`}>@KhavariJustin1</div>
-                        <div className={`text-[10px] ${dimText}`}>Connected • Twitter/X Feed</div>
+                {/* Header with poll button */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className={`text-sm font-bold ${headText}`}>Following Feed Intelligence</div>
+                    <div className={`text-[10px] ${dimText}`}>AI-curated positions from your followed accounts (last 14 days){xLastPolled ? ` \u00B7 Last polled ${xLastPolled}` : ""}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[9px] ${dimText}`}>{xTimeline.length} signals · {xWatchlist.length} tickers</span>
+                  </div>
+                </div>
+
+                {/* Sub-navigation */}
+                <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-hide">
+                  {([
+                    ["watchlist","📋 Watchlist"],["pnl","📊 P&L"],["convictions","🎯 Convictions"],["themes","🧩 Themes"],["brief","📰 Brief"],
+                    ["overlap","🔄 Overlap"],["earnings","📅 Earnings"],["heatmap","🗺️ Sectors"],["darkpool","🕵️ Dark Pool"],
+                    ["timeline","📡 Timeline"],["accounts","⚡ Feeds"]
+                  ] as const).map(([k,label])=>(
+                    <button key={k} onClick={()=>setXSubView(k as any)} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold whitespace-nowrap transition-all ${xSubView===k?(dark?"bg-sky-600 text-white":"bg-sky-500 text-white"):btnOutline}`}>{label}</button>
+                  ))}
+                </div>
+
+                {/* ── Curated Watchlist View ── */}
+                {xSubView==="watchlist" && (
+                  <div className="space-y-3">
+                  <div className={`border rounded-lg ${cardBg}`}>
+                    <div className={`px-4 py-3 border-b ${borderDim} flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Curated Watchlist from X</div>
+                      <div className={`text-[10px] ${dimText}`}>{xWatchlist.length} tickers tracked</div>
+                    </div>
+                    {xWatchlistLoading && xWatchlist.length===0 ? (
+                      <div className={`p-8 text-center text-xs ${dimText}`}>Loading watchlist...</div>
+                    ) : xWatchlist.length > 0 ? (
+                      <div className="divide-y" style={{borderColor: dark?"#27272a":"#e4e4e7"}}>
+                        {xWatchlist.map((w:any,i:number)=>(
+                          <div key={w.ticker} className={`px-4 py-3 ${dark?"hover:bg-zinc-800/50":"hover:bg-zinc-50"} transition-colors`}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-sm font-bold font-mono ${headText}`}>{w.ticker}</span>
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                                    w.action==="BUY"?(dark?"bg-emerald-900/40 text-emerald-400":"bg-emerald-50 text-emerald-700"):
+                                    w.action==="SELL"?(dark?"bg-red-900/40 text-red-400":"bg-red-50 text-red-700"):
+                                    w.action==="WATCH"?(dark?"bg-amber-900/40 text-amber-400":"bg-amber-50 text-amber-700"):
+                                    (dark?"bg-zinc-800 text-zinc-400":"bg-zinc-100 text-zinc-600")
+                                  }`}>{w.action}</span>
+                                  {w.serenity_mentioned && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${dark?"bg-violet-900/40 text-violet-400":"bg-violet-50 text-violet-700"}`}>Serenity</span>}
+                                  <span className={`text-[9px] ${dimText}`}>{w.signal_count} signal{w.signal_count!==1?"s":""}</span>
+                                </div>
+                                <div className={`text-xs ${bodyText} leading-relaxed`}>{w.thesis}</div>
+                                <div className="flex items-center gap-3 mt-1.5">
+                                  {w.entry_target && <span className={`text-[10px] ${dimText}`}>Entry: <span className={`font-mono ${headText}`}>${w.entry_target}</span></span>}
+                                  {w.price_target && <span className={`text-[10px] ${dimText}`}>Target: <span className="font-mono text-emerald-400">${w.price_target}</span></span>}
+                                  {w.stop_loss && <span className={`text-[10px] ${dimText}`}>Stop: <span className="font-mono text-red-400">${w.stop_loss}</span></span>}
+                                  <span className={`text-[10px] ${dimText}`}>Confidence: <span className={`font-mono ${w.avg_confidence>=0.7?"text-emerald-400":w.avg_confidence>=0.4?"text-amber-400":"text-zinc-500"}`}>{Math.round(w.avg_confidence*100)}%</span></span>
+                                </div>
+                                <div className="flex gap-1 mt-1.5 flex-wrap">
+                                  {w.sources?.map((s:string)=>(
+                                    <span key={s} className={`text-[9px] px-1.5 py-0.5 rounded ${dark?"bg-zinc-800 text-zinc-500":"bg-zinc-100 text-zinc-500"}`}>@{s}</span>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={`p-4`}>
+                        <div className={`text-xs ${dimText} mb-3 text-center`}>No signals yet. Paste tweets below to build your watchlist.</div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Paste Posts Box */}
+                  <div className={`border rounded-lg ${cardBg}`}>
+                    <div className={`px-4 py-2.5 border-b ${borderDim} flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Paste Posts</div>
+                      <div className={`text-[9px] ${dimText}`}>Separate posts with blank lines — @handles auto-detected</div>
+                    </div>
+                    <div className="p-3">
+                      <textarea
+                        value={xPasteText}
+                        onChange={e => setXPasteText(e.target.value)}
+                        placeholder={"@Serenity $COHR looking strong above $95, targeting $110. Stop at $88.\n\n@unusual_whales Large call sweep on $NVDA 06/20 $140C for $2.1M\n\n@Mr_Derivatives $SPY puts printing, bearish flow all day"}
+                        rows={6}
+                        className={`w-full text-xs px-3 py-2 rounded-md resize-none font-mono ${inputCls}`}
+                      />
+                      <div className="flex items-center justify-between mt-2">
+                        <div className={`text-[10px] ${dimText}`}>
+                          {xParseResult && <span className={xParseResult.includes("Error") ? "text-red-400" : "text-emerald-400"}>{xParseResult}</span>}
+                        </div>
+                        <button onClick={parseXPosts} disabled={xParsing || !xPasteText.trim()} className={btn}>
+                          {xParsing ? "Parsing with AI..." : "Parse & Add to Watchlist"}
+                        </button>
                       </div>
                     </div>
-                    <a href="https://twitter.com/KhavariJustin1" target="_blank" rel="noreferrer" className={`text-[10px] px-3 py-1.5 rounded-lg font-bold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>View Profile →</a>
                   </div>
-                  <a key={`timeline-${dark}`} className="twitter-timeline" data-theme={dark ? "dark" : "light"} data-height="350" data-chrome="noheader nofooter noborders transparent" href="https://twitter.com/KhavariJustin1">Loading tweets...</a>
-                </div>
+                  </div>
+                )}
 
-                {/* Following Feed — Key accounts */}
-                <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Following Feed</div>
-                  <div className={`text-[10px] mb-3 ${dimText}`}>Posts from accounts you follow — click to load their timeline</div>
-                  <div className="flex gap-1 flex-wrap mb-3">
-                    {[
-                      {handle:"unusual_whales",label:"Unusual Whales"},
-                      {handle:"DeItaone",label:"Walter Bloomberg"},
-                      {handle:"zaborskitrading",label:"Zaborski"},
-                      {handle:"jimcramer",label:"Jim Cramer"},
-                      {handle:"elikidesign",label:"Eli Ki"},
-                      {handle:"chaaborski",label:"ChaBorski"},
-                      {handle:"Mr_Derivatives",label:"Mr. Derivatives"},
-                      {handle:"OptionsHawk",label:"Options Hawk"},
-                      {handle:"traborski",label:"TraBorski"},
-                    ].map(a => (
-                      <button key={a.handle} onClick={() => setXFollowingView(xFollowingView===a.handle?"":a.handle)} className={`text-[10px] px-2.5 py-1 rounded-lg transition-all ${xFollowingView === a.handle ? (dark ? "bg-sky-500/20 text-sky-300 border border-sky-500" : "bg-sky-50 text-sky-600 border border-sky-300") : `${dark ? "bg-zinc-800 text-zinc-400 hover:text-zinc-200" : "bg-gray-100 text-gray-500 hover:text-gray-700"}`}`}>@{a.handle}</button>
-                    ))}
+                {/* ── Signal Timeline View ── */}
+                {xSubView==="timeline" && (
+                  <div className={`border rounded-lg ${cardBg}`}>
+                    <div className={`px-4 py-3 border-b ${borderDim} flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Signal Timeline</div>
+                      <div className={`text-[10px] ${dimText}`}>{xTimeline.length} signals</div>
+                    </div>
+                    {xTimelineLoading && xTimeline.length===0 ? (
+                      <div className={`p-8 text-center text-xs ${dimText}`}>Loading timeline...</div>
+                    ) : xTimeline.length > 0 ? (
+                      <div className="divide-y max-h-[700px] overflow-y-auto scrollbar-hide" style={{borderColor: dark?"#27272a":"#e4e4e7"}}>
+                        {xTimeline.map((sig:any)=>(
+                          <div key={sig.id} className={`px-4 py-2.5 ${dark?"hover:bg-zinc-800/50":"hover:bg-zinc-50"} transition-colors`}>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-[10px] font-bold ${sig.priority===0?"text-violet-400":sig.priority===1?"text-sky-400":dimText}`}>@{sig.source}</span>
+                              <span className={`text-[10px] ${dimText}`}>{sig.source_label}</span>
+                              <span className={`text-[9px] font-mono font-bold ${headText}`}>${sig.ticker}</span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${
+                                sig.action==="BUY"?(dark?"bg-emerald-900/40 text-emerald-400":"bg-emerald-50 text-emerald-700"):
+                                sig.action==="SELL"?(dark?"bg-red-900/40 text-red-400":"bg-red-50 text-red-700"):
+                                (dark?"bg-zinc-800 text-zinc-400":"bg-zinc-100 text-zinc-500")
+                              }`}>{sig.action}</span>
+                              <span className={`text-[9px] ml-auto ${dimText}`}>{sig.timestamp ? new Date(sig.timestamp).toLocaleDateString() : ""}</span>
+                            </div>
+                            <div className={`text-[11px] ${bodyText} leading-relaxed`}>{sig.thesis}</div>
+                            {sig.url && <a href={sig.url} target="_blank" rel="noreferrer" className="text-[9px] text-sky-500 hover:underline mt-0.5 inline-block">View on X</a>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={`p-8 text-center`}>
+                        <div className={`text-xs ${dimText} mb-3`}>No signals in timeline yet. Click &quot;Scan Feeds&quot; to start.</div>
+                        <button onClick={pollFollowingFeed} disabled={xPolling} className={btn}>{xPolling?"Scanning...":"Scan Now"}</button>
+                      </div>
+                    )}
                   </div>
-                  {xFollowingView && (
-                    <a key={`following-${xFollowingView}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="400" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/${xFollowingView}`}>Loading @{xFollowingView}...</a>
-                  )}
-                </div>
+                )}
 
-                {/* Photonics Twitter */}
-                <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Photonics Twitter</div>
-                  <div className="flex gap-1 flex-wrap mb-3">
-                    {["COHR","CIEN","MRVL","CRDO","POET","LWLG","AAOI","AEHR"].map(t => (
-                      <button key={t} onClick={() => setTwitterSearchTicker(t)} className={`text-[10px] px-2 py-1 rounded-lg font-mono transition-all ${twitterSearchTicker === t ? (dark ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500" : "bg-indigo-50 text-indigo-600 border border-indigo-300") : `${dark ? "bg-zinc-800 text-zinc-500 hover:text-zinc-300" : "bg-gray-100 text-gray-500 hover:text-gray-700"}`}`}>${t}</button>
-                    ))}
-                  </div>
-                  {twitterSearchTicker && (
-                    <a key={`photonics-search-${twitterSearchTicker}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="350" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/search?q=%24${twitterSearchTicker}%20photonics%20OR%20optics%20OR%20semiconductor&f=live`}>Loading...</a>
-                  )}
-                </div>
+                {/* ── Live Feeds View (individual account embeds) ── */}
+                {xSubView==="accounts" && (
+                  <div className="space-y-4">
+                    <div className={`border rounded-lg p-4 ${cardBg}`}>
+                      <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>View Account Timeline</div>
+                      <div className="flex gap-1 flex-wrap mb-3">
+                        {[
+                          {handle:"unusual_whales",label:"Unusual Whales"},
+                          {handle:"DeItaone",label:"Walter Bloomberg"},
+                          {handle:"zaborskitrading",label:"Zaborski"},
+                          {handle:"jimcramer",label:"Jim Cramer"},
+                          {handle:"elikidesign",label:"Eli Ki"},
+                          {handle:"chaaborski",label:"ChaBorski"},
+                          {handle:"Mr_Derivatives",label:"Mr. Derivatives"},
+                          {handle:"OptionsHawk",label:"Options Hawk"},
+                          {handle:"traborski",label:"TraBorski"},
+                          {handle:"aleaboreddit",label:"Serenity"},
+                          {handle:"MispricedAssets",label:"Mispriced Assets"},
+                        ].map(a => (
+                          <button key={a.handle} onClick={() => setXFollowingView(xFollowingView===a.handle?"":a.handle)} className={`text-[10px] px-2.5 py-1 rounded-md transition-all ${xFollowingView === a.handle ? (dark ? "bg-sky-500/15 text-sky-400 border border-sky-500/50" : "bg-sky-50 text-sky-600 border border-sky-300") : `border ${dark ? "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600" : "border-zinc-200 text-zinc-500 hover:text-zinc-700 hover:border-zinc-400"}`}`}>{a.label}</button>
+                        ))}
+                      </div>
+                      {xFollowingView ? (
+                        <a key={`following-${xFollowingView}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="500" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/${xFollowingView}`}>Loading @{xFollowingView}...</a>
+                      ) : (
+                        <div className={`text-xs ${dimText} py-6 text-center`}>Select an account above to view their timeline</div>
+                      )}
+                    </div>
 
-                {/* Stock Twitter Search */}
-                <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Stock Twitter Search</div>
-                  <div className="flex gap-2 mb-3">
-                    <input value={twitterSearchTicker} onChange={e => setTwitterSearchTicker(e.target.value.toUpperCase())} placeholder="Ticker (e.g. AAPL)" className={`w-32 ${input} font-mono uppercase`} />
-                    {["SPY","QQQ","NVDA","AAPL","TSLA"].map(t => (
-                      <button key={t} onClick={() => setTwitterSearchTicker(t)} className={`text-[10px] px-2 py-1 rounded-lg font-mono ${dark ? "bg-zinc-800 text-zinc-500 hover:text-zinc-300" : "bg-gray-100 text-gray-500 hover:text-gray-700"}`}>${t}</button>
-                    ))}
+                    {/* Ticker search */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className={`border rounded-lg p-4 ${cardBg}`}>
+                        <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Photonics Twitter</div>
+                        <div className="flex gap-1 flex-wrap mb-3">
+                          {["COHR","CIEN","MRVL","CRDO","POET","LWLG","AAOI","AEHR"].map(t => (
+                            <button key={t} onClick={() => setTwitterSearchTicker(t)} className={`text-[10px] px-2 py-1 rounded-md font-mono transition-all ${twitterSearchTicker === t ? (dark ? "bg-blue-500/15 text-blue-400 border border-blue-500/50" : "bg-blue-50 text-blue-700 border border-blue-400") : `border ${dark ? "border-zinc-800 text-zinc-500 hover:text-zinc-300" : "border-zinc-200 text-zinc-500 hover:text-zinc-700"}`}`}>${t}</button>
+                          ))}
+                        </div>
+                        {twitterSearchTicker && (
+                          <a key={`photonics-search-${twitterSearchTicker}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="350" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/search?q=%24${twitterSearchTicker}%20photonics%20OR%20optics%20OR%20semiconductor&f=live`}>Loading...</a>
+                        )}
+                      </div>
+                      <div className={`border rounded-lg p-4 ${cardBg}`}>
+                        <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Stock Search</div>
+                        <div className="flex gap-2 mb-3">
+                          <input value={twitterSearchTicker} onChange={e => setTwitterSearchTicker(e.target.value.toUpperCase())} placeholder="Ticker" className={`w-24 ${input} font-mono uppercase`} />
+                          {["SPY","QQQ","NVDA","AAPL","TSLA"].map(t => (
+                            <button key={t} onClick={() => setTwitterSearchTicker(t)} className={`text-[10px] px-2 py-1 rounded-md font-mono border ${dark ? "border-zinc-800 text-zinc-500 hover:text-zinc-300" : "border-zinc-200 text-zinc-500 hover:text-zinc-700"}`}>${t}</button>
+                          ))}
+                        </div>
+                        {twitterSearchTicker && (
+                          <a key={`stock-search-${twitterSearchTicker}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="350" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/search?q=%24${twitterSearchTicker}&f=live`}>Loading...</a>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  {twitterSearchTicker && (
-                    <a key={`stock-search-${twitterSearchTicker}-${dark}`} className="twitter-timeline" data-theme={dark?"dark":"light"} data-height="350" data-chrome="noheader nofooter noborders transparent" href={`https://twitter.com/search?q=%24${twitterSearchTicker}&f=live`}>Loading...</a>
-                  )}
-                </div>
+                )}
 
-                {/* Tweet Embed */}
-                <div className={`border rounded-lg p-4 ${cardBg}`}>
-                  <div className={`text-xs uppercase tracking-wider mb-2 ${dimText2}`}>Embed a Tweet</div>
-                  <div className="flex gap-2">
-                    <input value={twitterTweetUrl} onChange={e => setTwitterTweetUrl(e.target.value)} placeholder="Paste tweet URL..." className={`flex-1 ${input}`} />
-                    <button onClick={loadTwitterOembed} disabled={twitterOembedLoading} className={btn}>{twitterOembedLoading ? "..." : "Embed"}</button>
+                {/* ── P&L Tracker View ── */}
+                {xSubView==="pnl" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Signal P&L Tracker</div>
+                      <button onClick={loadPnlTracker} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{pnlLoading?"Loading...":"↻ Refresh"}</button>
+                    </div>
+                    {pnlData.length===0 && !pnlLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">📊</div>
+                        <div className="text-xs">No signals tracked yet. Paste some posts first!</div>
+                        <button onClick={loadPnlTracker} className={`mt-3 ${btn}`}>Load P&L Data</button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {pnlData.map((s:any,i:number)=>(
+                          <div key={i} className={`border rounded-lg p-3 ${cardBg} flex items-center justify-between`}>
+                            <div className="flex items-center gap-3">
+                              <div className={`w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold ${(s.pnl_pct||0)>=0?"bg-emerald-500/15 text-emerald-400":"bg-red-500/15 text-red-400"}`}>
+                                {(s.pnl_pct||0)>=0?"▲":"▼"}
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-sm font-bold font-mono ${headText}`}>{s.ticker}</span>
+                                  <span className={`text-[9px] ${dimText}`}>via {s.source}</span>
+                                  {s.source==="Serenity" && <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${dark?"bg-violet-900/40 text-violet-400":"bg-violet-50 text-violet-700"}`}>⭐</span>}
+                                </div>
+                                <span className={`text-[10px] ${dimText}`}>{s.date_mentioned||"—"} · Mentioned at ${s.price_at_mention?.toFixed(2)||"?"}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className={`font-bold font-mono text-sm ${(s.pnl_pct||0)>=0?"text-emerald-400":"text-red-400"}`}>
+                                {(s.pnl_pct||0)>=0?"+":""}{(s.pnl_pct||0).toFixed(2)}%
+                              </div>
+                              <div className={`text-[10px] font-mono ${dimText}`}>Now ${s.current_price?.toFixed(2)||"?"}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  {twitterOembed?.html && <div className="mt-3" dangerouslySetInnerHTML={{__html: twitterOembed.html}} />}
-                </div>
+                )}
+
+                {/* ── Conviction Scores View ── */}
+                {xSubView==="convictions" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Conviction Scores</div>
+                      <div className="flex gap-2">
+                        <button onClick={createAutoAlerts} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-amber-900/30 text-amber-400 border border-amber-800":"bg-amber-50 text-amber-600 border border-amber-200"}`}>⚡ Auto-Alerts</button>
+                        <button onClick={loadConvictionScores} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{convictionLoading?"Loading...":"↻ Refresh"}</button>
+                      </div>
+                    </div>
+                    {convictionScores.length===0 && !convictionLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">🎯</div>
+                        <div className="text-xs">No conviction data yet. Parse some posts first!</div>
+                        <button onClick={loadConvictionScores} className={`mt-3 ${btn}`}>Load Convictions</button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {convictionScores.map((s:any,i:number)=>(
+                          <div key={i} className={`border rounded-lg p-3 ${cardBg}`}>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-bold font-mono ${headText}`}>{s.ticker}</span>
+                                <span className={`text-[9px] ${dimText}`}>{s.mention_count} mentions · {s.unique_sources} source{s.unique_sources!==1?"s":""}</span>
+                                {s.has_entry && <span className={`text-[9px] px-1.5 py-0.5 rounded ${dark?"bg-emerald-900/30 text-emerald-400":"bg-emerald-50 text-emerald-600"}`}>Has Entry</span>}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className="w-20 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                                  <div className="h-full rounded-full" style={{width:`${s.conviction_score||0}%`,background:`linear-gradient(90deg,#3b82f6,${(s.conviction_score||0)>70?"#10b981":(s.conviction_score||0)>40?"#f59e0b":"#ef4444"})`}}/>
+                                </div>
+                                <span className={`font-mono font-bold text-xs ${headText}`}>{s.conviction_score||0}</span>
+                              </div>
+                            </div>
+                            <p className={`text-[11px] ${bodyText}`}>{s.primary_thesis||"No thesis extracted"}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Theme Clustering View ── */}
+                {xSubView==="themes" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Theme Clustering</div>
+                      <button onClick={loadThemes} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{themesLoading?"Generating...":"🧠 Cluster Themes"}</button>
+                    </div>
+                    {themes.length===0 && !themesLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">🧩</div>
+                        <div className="text-xs">Click &quot;Cluster Themes&quot; to see AI-generated thematic baskets from your signals</div>
+                      </div>
+                    ) : themesLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2 animate-pulse">🧠</div>
+                        <div className="text-xs">AI is clustering your signals into themes...</div>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {themes.map((t:any,i:number)=>(
+                          <div key={i} className={`border rounded-xl p-4 ${cardBg}`}>
+                            <h4 className={`text-sm font-bold mb-1 ${headText}`}>{t.name}</h4>
+                            <p className={`text-[10px] ${dimText} mb-3`}>{t.description}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(t.tickers||[]).map((tk:any,j:number)=>(
+                                <span key={j} className={`px-2 py-1 rounded text-[10px] font-mono border cursor-pointer ${dark?"bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-sky-600":"bg-zinc-50 border-zinc-200 text-zinc-700 hover:border-sky-400"}`} onClick={()=>{setTab("charts");setChartTicker(typeof tk==="string"?tk:tk.ticker);}}>
+                                  ${typeof tk==="string"?tk:tk.ticker}{tk.current_price?<span className="text-emerald-400 ml-1">${tk.current_price.toFixed(2)}</span>:null}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Morning Brief View ── */}
+                {xSubView==="brief" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>AI Morning Brief</div>
+                      <button onClick={loadSignalBrief} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{briefLoading?"Generating...":"🧠 Generate Brief"}</button>
+                    </div>
+                    {!signalBrief && !briefLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">📰</div>
+                        <div className="text-xs">Click &quot;Generate Brief&quot; for an AI-synthesized morning brief from all your parsed signals</div>
+                      </div>
+                    ) : briefLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2 animate-pulse">🧠</div>
+                        <div className="text-xs">AI is synthesizing your signals into a morning brief...</div>
+                      </div>
+                    ) : (
+                      <div className={`border rounded-xl p-5 ${cardBg}`}>
+                        <div className={`text-xs leading-relaxed whitespace-pre-wrap ${bodyText}`}>{signalBrief}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Portfolio Overlap View ── */}
+                {xSubView==="overlap" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Portfolio Overlap</div>
+                      <button onClick={loadPortfolioOverlap} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{overlapLoading?"Loading...":"🔄 Check Overlap"}</button>
+                    </div>
+                    {portfolioOverlap.length===0 && !overlapLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">🔄</div>
+                        <div className="text-xs">Click &quot;Check Overlap&quot; to find signals that match your Fidelity holdings</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {portfolioOverlap.map((o:any,i:number)=>(
+                          <div key={i} className={`border rounded-lg p-4 ${dark?"border-amber-800/30":"border-amber-200"} ${cardBg}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className="text-amber-400">⚠️</span>
+                                <span className={`text-sm font-bold font-mono ${headText}`}>{o.ticker}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${dark?"bg-amber-900/40 text-amber-400":"bg-amber-50 text-amber-700"}`}>Portfolio + Signal</span>
+                              </div>
+                              <span className={`font-mono font-bold text-sm ${(o.portfolio_pnl||0)>=0?"text-emerald-400":"text-red-400"}`}>
+                                {(o.portfolio_pnl||0)>=0?"+":""}{(o.portfolio_pnl||0).toFixed(2)}%
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <p className={`text-[9px] uppercase tracking-wider mb-1 ${dimText2}`}>Signal Intelligence</p>
+                                <p className={`text-[11px] ${bodyText}`}>{o.signal_source}: {o.signal_thesis}</p>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold mt-1 inline-block ${o.signal_action==="BUY"?(dark?"bg-emerald-900/40 text-emerald-400":"bg-emerald-50 text-emerald-700"):(dark?"bg-red-900/40 text-red-400":"bg-red-50 text-red-700")}`}>{o.signal_action}</span>
+                              </div>
+                              <div>
+                                <p className={`text-[9px] uppercase tracking-wider mb-1 ${dimText2}`}>Your Position</p>
+                                <p className={`text-[11px] ${bodyText}`}>{o.portfolio_qty} shares @ ${o.portfolio_avg_cost?.toFixed(2)}</p>
+                                <p className={`text-[10px] ${dimText}`}>Current: ${o.current_price?.toFixed(2)}</p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Earnings Cross-Reference View ── */}
+                {xSubView==="earnings" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Earnings Cross-Reference</div>
+                      <button onClick={loadEarningsCross} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{earningsXLoading?"Loading...":"📅 Check Earnings"}</button>
+                    </div>
+                    {earningsCross.length===0 && !earningsXLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">📅</div>
+                        <div className="text-xs">Click &quot;Check Earnings&quot; to see which signal tickers have upcoming earnings</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {earningsCross.map((e:any,i:number)=>(
+                          <div key={i} className={`border rounded-lg p-3 ${(e.days_until_earnings||99)<=7?dark?"border-red-800/40":"border-red-200":(e.days_until_earnings||99)<=14?dark?"border-amber-800/30":"border-amber-200":""} ${cardBg}`}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-bold font-mono ${headText}`}>{e.ticker}</span>
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${(e.days_until_earnings||99)<=7?(dark?"bg-red-900/40 text-red-400":"bg-red-50 text-red-700"):(e.days_until_earnings||99)<=14?(dark?"bg-amber-900/40 text-amber-400":"bg-amber-50 text-amber-700"):(dark?"bg-zinc-800 text-zinc-400":"bg-zinc-100 text-zinc-600")}`}>
+                                  {e.days_until_earnings!=null?`${e.days_until_earnings}d`:"TBD"}
+                                </span>
+                                <span className={`text-[9px] ${dimText}`}>{e.signal_source}</span>
+                              </div>
+                              <span className={`text-[10px] ${dimText}`}>{e.earnings_date||"No date"}</span>
+                            </div>
+                            <p className={`text-[10px] ${dimText} mt-1`}>{e.signal_thesis}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Sector Heatmap View ── */}
+                {xSubView==="heatmap" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Signal Sector Map</div>
+                      <button onClick={loadSectorHeatmapData} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{sectorHeatmapLoading?"Loading...":"🗺️ Load Map"}</button>
+                    </div>
+                    {sectorHeatmapData.length===0 && !sectorHeatmapLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">🗺️</div>
+                        <div className="text-xs">Click &quot;Load Map&quot; to see where signal tickers cluster by sector</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {sectorHeatmapData.map((sec:any,i:number)=>(
+                          <div key={i} className={`border rounded-xl p-4 ${cardBg}`}>
+                            <div className="flex items-center justify-between mb-3">
+                              <h4 className={`text-sm font-bold ${headText}`}>{sec.sector}</h4>
+                              <span className={`font-mono text-xs font-bold ${(sec.avg_change||0)>=0?"text-emerald-400":"text-red-400"}`}>
+                                {(sec.avg_change||0)>=0?"+":""}{(sec.avg_change||0).toFixed(2)}%
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5">
+                              {(sec.tickers||[]).map((t:any,j:number)=>(
+                                <div key={j} className={`rounded-lg p-2 text-center cursor-pointer ${(t.daily_change_pct||0)>=0?dark?"bg-emerald-500/10 border border-emerald-500/20":"bg-emerald-50 border border-emerald-200":dark?"bg-red-500/10 border border-red-500/20":"bg-red-50 border border-red-200"}`} onClick={()=>{setTab("charts");setChartTicker(t.ticker);}}>
+                                  <div className={`font-bold text-[10px] font-mono ${headText}`}>{t.ticker}</div>
+                                  <div className={`font-mono text-[9px] ${(t.daily_change_pct||0)>=0?"text-emerald-400":"text-red-400"}`}>
+                                    {(t.daily_change_pct||0)>=0?"+":""}{(t.daily_change_pct||0).toFixed(2)}%
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Dark Pool & Insider View ── */}
+                {xSubView==="darkpool" && (
+                  <div className="space-y-3">
+                    <div className={`flex items-center justify-between`}>
+                      <div className={`text-xs uppercase tracking-wider font-bold ${dimText2}`}>Dark Pool & Insider Activity</div>
+                      <button onClick={loadDarkpoolData} className={`text-[10px] px-3 py-1.5 rounded-md font-semibold ${dark?"bg-sky-900/30 text-sky-400 border border-sky-800":"bg-sky-50 text-sky-600 border border-sky-200"}`}>{darkpoolLoading?"Loading...":"🕵️ Scan Activity"}</button>
+                    </div>
+                    {darkpoolData.length===0 && !darkpoolLoading ? (
+                      <div className={`text-center py-12 ${dimText}`}>
+                        <div className="text-3xl mb-2">🕵️</div>
+                        <div className="text-xs">Click &quot;Scan Activity&quot; to check insider trades & institutional holdings for signal tickers</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {darkpoolData.map((d:any,i:number)=>(
+                          <div key={i} className={`border rounded-lg p-4 ${cardBg}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <span className={`text-sm font-bold font-mono ${headText}`}>{d.ticker}</span>
+                                <span className={`text-[9px] ${dimText}`}>Signal: {d.signal_source}</span>
+                              </div>
+                              <span className={`text-xs font-bold ${(d.insider_net||0)>0?"text-emerald-400":(d.insider_net||0)<0?"text-red-400":dimText}`}>
+                                Net Insider: {(d.insider_net||0)>0?"+":""}{d.insider_net||0}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div className={`rounded-lg p-2 text-center ${dark?"bg-emerald-500/10":"bg-emerald-50"}`}>
+                                <div className="text-emerald-400 font-bold text-sm">{d.insider_buys_90d||0}</div>
+                                <div className={`text-[9px] ${dimText}`}>Buys (90d)</div>
+                              </div>
+                              <div className={`rounded-lg p-2 text-center ${dark?"bg-red-500/10":"bg-red-50"}`}>
+                                <div className="text-red-400 font-bold text-sm">{d.insider_sells_90d||0}</div>
+                                <div className={`text-[9px] ${dimText}`}>Sells (90d)</div>
+                              </div>
+                              <div className={`rounded-lg p-2 text-center ${dark?"bg-sky-500/10":"bg-sky-50"}`}>
+                                <div className="text-sky-400 font-bold text-sm">{d.institutional_holders_count||0}</div>
+                                <div className={`text-[9px] ${dimText}`}>Institutions</div>
+                              </div>
+                            </div>
+                            {d.top_institutions&&d.top_institutions.length>0&&(
+                              <div className={`mt-2 text-[9px] ${dimText}`}>Top holders: {d.top_institutions.slice(0,3).join(", ")}</div>
+                            )}
+                            <p className={`text-[10px] ${dimText} mt-1.5`}>{d.signal_thesis}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -6666,7 +7219,7 @@ function CryptoPanel() {
                             {entry.tickers?.length > 0 && (
                               <div className="flex gap-1 mt-2 flex-wrap">
                                 {entry.tickers.map((t: string) => (
-                                  <span key={t} className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold cursor-pointer ${dark ? "bg-indigo-950/40 text-indigo-400" : "bg-indigo-50 text-indigo-600"}`} onClick={() => { setTab("charts"); setChartTicker(t); }}>${t}</span>
+                                  <span key={t} className={`text-[10px] px-1.5 py-0.5 rounded font-mono font-bold cursor-pointer ${dark ? "bg-blue-950/40 text-blue-500" : "bg-blue-50 text-blue-700"}`} onClick={() => { setTab("charts"); setChartTicker(t); }}>${t}</span>
                                 ))}
                               </div>
                             )}
@@ -6714,6 +7267,7 @@ function CryptoPanel() {
                     </div>
                     <div className="flex gap-2">
                       <button onClick={loadSerenityPrices} className={`text-[10px] px-3 py-1.5 rounded-lg font-bold ${dark?"bg-violet-900/30 text-violet-400 border border-violet-800":"bg-violet-50 text-violet-600 border border-violet-200"}`}>{serenityLoading?"...":"↻ Refresh"}</button>
+                      <button onClick={async()=>{const c=await pollSerenitySignals();alert(`Poll complete: ${c} new signal${c!==1?"s":""} found`);}} disabled={serenityPolling} className={`text-[10px] px-3 py-1.5 rounded-lg font-bold ${dark?"bg-amber-900/30 text-amber-400 border border-amber-800":"bg-amber-50 text-amber-600 border border-amber-200"} disabled:opacity-50`}>{serenityPolling?"Polling...":"⚡ Poll Serenity"}</button>
                       <a href="https://x.com/aleabitoreddit" target="_blank" rel="noreferrer" className={`text-[10px] px-3 py-1.5 rounded-lg font-bold ${dark?"bg-zinc-800 text-zinc-300 border border-zinc-700":"bg-gray-100 text-gray-600 border border-gray-200"}`}>View on 𝕏 →</a>
                     </div>
                   </div>
@@ -6724,6 +7278,38 @@ function CryptoPanel() {
                       Hyperscaler CapEx growing from $220B (2024) → $550B (2026) → $800B (2027). The $800B+ AI buildout is compared to 2004 grid modernization. NeoCloud providers (GPU-as-a-service) capture the overflow demand that hyperscalers can&apos;t build fast enough internally. Core positions in Mag7-contracted NeoCloud operators + compute infrastructure plays.
                     </div>
                   </div>
+                </div>
+
+                {/* NEW SIGNALS */}
+                <div className={`border rounded-lg p-4 ${cardBg}`}>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className={`text-xs uppercase tracking-wider ${dimText2}`}>⚡ New Signals</div>
+                    <button onClick={loadSerenitySignals} className={`text-[10px] px-2 py-1 rounded ${dark?"text-amber-400 hover:bg-amber-900/20":"text-amber-600 hover:bg-amber-50"}`}>{serenitySignalsLoading?"...":"↻"}</button>
+                  </div>
+                  {serenitySignalsLoading && serenitySignals.length === 0 ? (
+                    <div className={`text-xs ${dimText}`}>Loading signals...</div>
+                  ) : serenitySignals.length === 0 ? (
+                    <div className={`text-xs ${dimText}`}>No new signals — poll Serenity or check back later</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {serenitySignals.map((sig: any, i: number) => (
+                        <div key={sig.id || i} className={`border rounded-lg p-3 ${dark?"border-white/[0.06] bg-zinc-900/30":"border-slate-100 bg-slate-50/50"}`}>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono font-bold text-amber-400">{sig.ticker || "—"}</span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${sig.action==="BUY"?"bg-emerald-500/20 text-emerald-400":sig.action==="SELL"?"bg-red-500/20 text-red-400":"bg-zinc-500/20 text-zinc-400"}`}>{sig.action || "WATCH"}</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-amber-500/20 text-amber-400 animate-pulse">NEW</span>
+                            </div>
+                            <div className="flex gap-1.5">
+                              <button onClick={async()=>{try{await fetch(`${BASE}/signals/${sig.id}/to-conviction`,{method:"POST"});loadSerenitySignals();}catch{}}} className={`text-[9px] px-2 py-1 rounded font-bold ${dark?"bg-emerald-900/30 text-emerald-400 border border-emerald-800/40 hover:bg-emerald-900/50":"bg-emerald-50 text-emerald-600 border border-emerald-200 hover:bg-emerald-100"}`}>+ Conviction</button>
+                              <button onClick={async()=>{try{await fetch(`${BASE}/signals/${sig.id}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:"dismissed"})});loadSerenitySignals();}catch{}}} className={`text-[9px] px-2 py-1 rounded font-bold ${dark?"bg-zinc-800 text-zinc-400 border border-zinc-700 hover:bg-zinc-700":"bg-gray-100 text-gray-500 border border-gray-200 hover:bg-gray-200"}`}>Dismiss</button>
+                            </div>
+                          </div>
+                          {sig.thesis && <div className={`text-[10px] leading-relaxed ${bodyText} line-clamp-1`}>{sig.thesis}</div>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Positions Table */}
@@ -6783,6 +7369,32 @@ function CryptoPanel() {
                   })()}
                 </div>
 
+                {/* SIGNAL HISTORY */}
+                <div className={`border rounded-lg p-4 ${cardBg}`}>
+                  <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>📋 Signal History</div>
+                  {serenitySignalHistory.length === 0 ? (
+                    <div className={`text-xs ${dimText}`}>No signal history yet</div>
+                  ) : (
+                    <div className="space-y-1">
+                      {serenitySignalHistory.map((sig: any, i: number) => (
+                        <div key={sig.id || i} className={`flex items-center gap-2 py-1.5 ${i < serenitySignalHistory.length - 1 ? `border-b ${borderDim2}` : ""}`}>
+                          {sig.status === "new" ? (
+                            <span className="w-4 h-4 flex items-center justify-center text-[10px] text-amber-400">●</span>
+                          ) : sig.status === "acted" || sig.status === "conviction" ? (
+                            <span className="w-4 h-4 flex items-center justify-center text-[10px] text-emerald-400">✓</span>
+                          ) : (
+                            <span className="w-4 h-4 flex items-center justify-center text-[10px] text-zinc-500">✕</span>
+                          )}
+                          <span className="text-xs font-mono font-bold text-amber-400 w-12">{sig.ticker || "—"}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${sig.action==="BUY"?"bg-emerald-500/20 text-emerald-400":sig.action==="SELL"?"bg-red-500/20 text-red-400":"bg-zinc-500/20 text-zinc-400"}`}>{sig.action || "WATCH"}</span>
+                          <span className={`text-[10px] flex-1 truncate ${bodyText}`}>{sig.thesis || sig.summary || "—"}</span>
+                          <span className={`text-[9px] ${dimText}`}>{sig.created_at ? new Date(sig.created_at).toLocaleDateString() : ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Serenity's Timeline Embed */}
                 <div className={`border rounded-lg p-4 ${cardBg}`}>
                   <div className={`text-xs uppercase tracking-wider mb-3 ${dimText2}`}>Latest Posts from @aleabitoreddit</div>
@@ -6815,6 +7427,8 @@ function CryptoPanel() {
                 </div>
               </div>
             )}
+          {/* ── Signals Sub-tab (redirects to twitter) ── */}
+
           </div>
         )}
 
@@ -6856,6 +7470,18 @@ function CryptoPanel() {
 
       {/* ── COMMAND BAR ──────────────────────────────────── */}
       <CommandBar dark={dark} BASE={BASE} onNavigate={(tabId, ticker) => { setTab(tabId); if (ticker) { setChartTicker(ticker); setTimeout(() => loadChart(ticker), 100); } }} isOpen={cmdOpen} onClose={() => setCmdOpen(false)} />
+
+        {/* ── WAR/MACRO ───────────────────────────────────── */}
+        {tab==="warmacro" && <WarMacro dark={dark} BASE={BASE} />}
+
+        {/* ── MARGIN TRACKER ─────────────────────────────── */}
+        {tab==="margin" && <MarginTracker dark={dark} BASE={BASE} />}
+
+        {/* ── POSITION HEALTH ────────────────────────────── */}
+        {tab==="health" && <PositionHealth dark={dark} BASE={BASE} />}
+
+        {/* ── COST BASIS ─────────────────────────────────── */}
+        {tab==="costbasis" && <CostBasis dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (

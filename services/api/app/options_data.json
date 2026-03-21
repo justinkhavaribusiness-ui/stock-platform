@@ -1,18 +1,18 @@
 {
   "summary": {
-    "total_trades": 33,
-    "winners": 23,
-    "losers": 8,
+    "total_trades": 35,
+    "winners": 24,
+    "losers": 9,
     "breakeven": 2,
-    "win_rate": 69.7,
-    "total_pnl": 2412.07,
-    "total_commissions": 35.93,
-    "avg_win": 141.78,
-    "avg_loss": -106.12,
+    "win_rate": 68.6,
+    "total_pnl": 2710.06,
+    "total_commissions": 37.94,
+    "avg_win": 162.36,
+    "avg_loss": -131.84,
     "best_trade": 1600.0,
-    "worst_trade": -320.66,
+    "worst_trade": -337.67,
     "largest_win_ticker": "OSCR",
-    "largest_loss_ticker": "HOOD"
+    "largest_loss_ticker": "BMNR"
   },
   "completed_trades": [
     {
@@ -173,6 +173,24 @@
       "net_pnl": -95.66,
       "commissions": 0.66,
       "net_after_fees": -95.66,
+      "status": "CLOSED",
+      "close_type": "BUY_CLOSE",
+      "account": "Individual"
+    },
+    {
+      "ticker": "BMNR",
+      "option_type": "CALL",
+      "strike": 45.0,
+      "expiry": "2027-01-15",
+      "strategy": "Unknown",
+      "contracts": 0,
+      "open_date": "",
+      "close_date": "03/04/2026",
+      "open_premium": 0,
+      "close_premium": -337.67,
+      "net_pnl": -337.67,
+      "commissions": 0.67,
+      "net_after_fees": -337.67,
       "status": "CLOSED",
       "close_type": "BUY_CLOSE",
       "account": "Individual"
@@ -608,6 +626,24 @@
       "status": "CLOSED",
       "close_type": "SELL_CLOSE",
       "account": ""
+    },
+    {
+      "ticker": "COHR",
+      "option_type": "CALL",
+      "strike": 300.0,
+      "expiry": "2026-03-06",
+      "strategy": "Long Call",
+      "contracts": 1,
+      "open_date": "03/03/2026",
+      "close_date": "03/04/2026",
+      "open_premium": -412.67,
+      "close_premium": 1048.33,
+      "net_pnl": 635.66,
+      "commissions": 1.34,
+      "net_after_fees": 635.66,
+      "status": "CLOSED",
+      "close_type": "SELL_CLOSE",
+      "account": "Individual"
     }
   ],
   "open_positions": [
@@ -700,19 +736,73 @@
       "status": "OPEN",
       "close_type": "",
       "account": "Individual"
+    },
+    {
+      "ticker": "OSCR",
+      "option_type": "CALL",
+      "strike": 20.0,
+      "expiry": "2027-01-15",
+      "strategy": "Covered Call",
+      "contracts": 1,
+      "open_date": "03/04/2026",
+      "close_date": "",
+      "open_premium": 297.33,
+      "close_premium": 0,
+      "net_pnl": 297.33,
+      "commissions": 0.67,
+      "net_after_fees": 297.33,
+      "status": "OPEN",
+      "close_type": "",
+      "account": "Individual"
+    },
+    {
+      "ticker": "OSCR",
+      "option_type": "CALL",
+      "strike": 35.0,
+      "expiry": "2027-01-15",
+      "strategy": "Covered Call",
+      "contracts": 2,
+      "open_date": "03/04/2026",
+      "close_date": "",
+      "open_premium": 192.65,
+      "close_premium": 0,
+      "net_pnl": 192.65,
+      "commissions": 1.35,
+      "net_after_fees": 192.65,
+      "status": "OPEN",
+      "close_type": "",
+      "account": "Individual"
+    },
+    {
+      "ticker": "BMNR",
+      "option_type": "CALL",
+      "strike": 42.0,
+      "expiry": "2027-01-15",
+      "strategy": "Covered Call",
+      "contracts": 1,
+      "open_date": "03/04/2026",
+      "close_date": "",
+      "open_premium": 374.33,
+      "close_premium": 0,
+      "net_pnl": 374.33,
+      "commissions": 0.67,
+      "net_after_fees": 374.33,
+      "status": "OPEN",
+      "close_type": "",
+      "account": "Individual"
     }
   ],
   "pnl_by_ticker": {
     "OSCR": 1799.13,
-    "COHR": 395.95,
+    "COHR": 1031.61,
     "SMCI": 309.33,
-    "BMNR": 251.98,
     "MARA": 66.35,
     "JD": 62.67,
     "MA": 42.66,
     "AMD": 10.66,
     "UUUU": 0.0,
     "SOFI": -30.43,
+    "BMNR": -85.69,
     "PYPL": -214.23,
     "HOOD": -282.0
   },
@@ -723,34 +813,36 @@
     "JD": 1,
     "OSCR": 7,
     "UUUU": 1,
+    "BMNR": 4,
     "HOOD": 2,
-    "COHR": 5,
-    "BMNR": 3,
+    "COHR": 6,
     "AMD": 1,
     "PYPL": 2,
     "MA": 1
   },
   "pnl_by_strategy": {
-    "Unknown": 1808.33,
+    "Unknown": 1470.66,
     "Covered Call": 653.02,
-    "Long Call": -46.96,
+    "Long Call": 588.7,
     "Long Put": -2.32
   },
   "trades_by_strategy": {
-    "Unknown": 9,
+    "Unknown": 10,
     "Covered Call": 12,
-    "Long Call": 11,
+    "Long Call": 12,
     "Long Put": 1
   },
   "monthly_pnl": {
     "2025-12": 1404.66,
     "2026-01": 761.05,
-    "2026-02": 246.36
+    "2026-02": 246.36,
+    "2026-03": 297.99
   },
   "monthly_trades": {
     "2025-12": 12,
     "2026-01": 14,
-    "2026-02": 7
+    "2026-02": 7,
+    "2026-03": 2
   },
-  "last_updated": "2026-03-02T21:10:06.784409+00:00"
+  "last_updated": "2026-03-04T22:05:52.433772+00:00"
 }

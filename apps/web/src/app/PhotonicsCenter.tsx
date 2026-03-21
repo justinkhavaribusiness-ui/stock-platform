@@ -14,26 +14,38 @@ const STEP_NAMES: Record<number, string> = {
 
 const DEFAULT_WATCHLIST_TICKERS = ["AAOI","AEHR","ALMU","ANET","AXTI","CIEN","COHR","CRDO","FN","GFS","GLW","LWLG","MRVL","MTSI","NOK","POET","SMTC","TSEM","VIAV"];
 
-const S: Record<string, any> = {
-  card: { background: "#161b22", border: "1px solid #30363d", borderRadius: 8, padding: 16, marginBottom: 12 },
-  input: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%", outline: "none" },
-  select: { background: "#0d1117", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", color: "#e6edf3", fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" },
-  btn: { padding: "8px 16px", background: "#1a8c5e", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
-  btnSecondary: { padding: "8px 16px", background: "#21262d", color: "#e6edf3", border: "1px solid #30363d", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
-  btnDanger: { padding: "6px 12px", background: "#c9362c", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12 },
-  btnSmall: { padding: "4px 10px", background: "#21262d", color: "#8b949e", border: "1px solid #30363d", borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
-  label: { color: "#8b949e", fontSize: 11, fontFamily: "'DM Sans', sans-serif", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4, display: "block" },
-  green: "#2ea043", red: "#f85149", yellow: "#d29922", blue: "#58a6ff", cyan: "#39d353", dim: "#484f58", text: "#e6edf3", muted: "#8b949e",
-  mono: { fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" },
-};
+function getS(dark: boolean): Record<string, any> {
+  const bg = dark ? "#161b22" : "#ffffff";
+  const bgDeep = dark ? "#0d1117" : "#f8f9fb";
+  const border = dark ? "#30363d" : "#e2e8f0";
+  const text = dark ? "#e6edf3" : "#1a1a2e";
+  const muted = dark ? "#8b949e" : "#64748b";
+  const dim = dark ? "#484f58" : "#94a3b8";
+  const btnBg = dark ? "#21262d" : "#f1f5f9";
+  return {
+    card: { background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: 16, marginBottom: 12 },
+    input: { background: bgDeep, border: `1px solid ${border}`, borderRadius: 6, padding: "8px 12px", color: text, fontFamily: "'DM Sans', sans-serif", fontSize: 13, width: "100%", outline: "none" },
+    select: { background: bgDeep, border: `1px solid ${border}`, borderRadius: 6, padding: "8px 12px", color: text, fontFamily: "'DM Sans', sans-serif", fontSize: 13, outline: "none" },
+    btn: { padding: "8px 16px", background: dark ? "#1a8c5e" : "#0d9f4f", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13, fontWeight: "bold" },
+    btnSecondary: { padding: "8px 16px", background: btnBg, color: text, border: `1px solid ${border}`, borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 13 },
+    btnDanger: { padding: "6px 12px", background: "#c9362c", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12 },
+    btnSmall: { padding: "4px 10px", background: btnBg, color: muted, border: `1px solid ${border}`, borderRadius: 4, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 11 },
+    label: { color: muted, fontSize: 11, fontFamily: "'DM Sans', sans-serif", textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4, display: "block" },
+    green: dark ? "#2ea043" : "#0d9f4f", red: dark ? "#f85149" : "#dc2626", yellow: dark ? "#d29922" : "#d97706", blue: dark ? "#58a6ff" : "#2563eb", cyan: dark ? "#39d353" : "#0d9f4f", dim, text, muted,
+    mono: { fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', monospace" },
+    bg, bgDeep, border,
+  };
+}
+let S = getS(true); // module-level, updated by PhotonicsCenter when dark prop changes
 
-function ChartTooltip({ active, payload, label }: any) {
+function ChartTooltip({ active, payload, label, dark = true }: any) {
   if (!active || !payload?.length) return null;
+  const s = getS(dark);
   return (
-    <div style={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 6, padding: "8px 12px", fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
-      <div style={{ color: "#8b949e", marginBottom: 4 }}>{label}</div>
+    <div style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 6, padding: "8px 12px", fontSize: 11, fontFamily: "'DM Sans', sans-serif" }}>
+      <div style={{ color: s.muted, marginBottom: 4 }}>{label}</div>
       {payload.map((p: any, i: number) => (
-        <div key={i} style={{ color: p.color || "#e6edf3", fontWeight: "bold" }}>{p.name}: {typeof p.value === "number" ? p.value.toFixed(2) : p.value}</div>
+        <div key={i} style={{ color: p.color || s.text, fontWeight: "bold" }}>{p.name}: {typeof p.value === "number" ? p.value.toFixed(2) : p.value}</div>
       ))}
     </div>
   );
@@ -1569,10 +1581,12 @@ Exited buy zone: COHR (rallied above $230)
   );
 }
 
-export default function PhotonicsCenter() {
+export default function PhotonicsCenter({ dark = true }: { dark?: boolean }) {
+  // Update module-level S so all sub-components pick up the theme
+  S = getS(dark);
   const [subTab, setSubTab] = useState("DASHBOARD");
   return (
-    <div style={{ ...S.mono }}>
+    <div style={{ ...S.mono, color: S.text, background: S.bgDeep, borderRadius: 8, padding: 4 }}>
       <div style={{ display: "flex", gap: 0, marginBottom: 20, borderBottom: "1px solid #30363d", overflowX: "auto" }}>
         {PHOTONICS_SUBTABS.map(t => (
           <button key={t} onClick={() => setSubTab(t)}

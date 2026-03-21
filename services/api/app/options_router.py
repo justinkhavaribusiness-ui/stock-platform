@@ -302,3 +302,84 @@ def get_options_summary():
         return {}
     with open(DATA_FILE) as f:
         return json.load(f).get("summary", {})
+
+
+@router.get("/options-journal/cost-basis")
+def get_cost_basis():
+    """Calculate true cost basis per ticker accounting for CC premium collected."""
+    import pathlib, csv as csvmod
+
+    # Load options journal
+    if not os.path.exists(DATA_FILE):
+        return {"positions": [], "total_premium": 0, "total_adjustment": 0}
+
+    with open(DATA_FILE) as f:
+        journal = json.load(f)
+
+    # Calculate premium by ticker from closed trades + open positions
+    premium_by_ticker = defaultdict(float)
+    for t in journal.get("closed_trades", []):
+        if t.get("is_short") and t.get("pnl", 0) > 0:
+            premium_by_ticker[t["ticker"]] += t["pnl"]
+    for t in journal.get("orphan_closings", []):
+        cash = t.get("close_cash", 0)
+        if cash < 0:  # BTC = debit = negative, so premium earned = original credit - BTC cost
+            premium_by_ticker[t["ticker"]] += abs(cash)  # approximate
+    for op in journal.get("open_positions", []):
+        if op.get("is_short"):
+            premium_by_ticker[op["ticker"]] += op.get("premium_received", 0)
+
+    # Load Fidelity positions
+    positions = []
+    csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+    if not csv_path.exists():
+        csv_path = pathlib.Path(__file__).parent / "positions.csv"
+    if not csv_path.exists():
+        csv_path = pathlib.Path(__file__).parent.parent / "positions.csv"
+    if csv_path.exists():
+        with open(csv_path) as f:
+            reader = csvmod.DictReader(f)
+            for row in reader:
+                sym = (row.get("Symbol") or "").strip()
+                if not sym or sym == "Cash" or sym.startswith("-") or "SPAXX" in sym:
+                    continue
+                try:
+                    qty = float((row.get("Quantity") or "0").replace(",", ""))
+                    avg_cost = float((row.get("Average Cost Basis") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                    cost_total = float((row.get("Cost Basis Total") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                    market_val = float((row.get("Current Value") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+                except (ValueError, TypeError):
+                    continue
+                if qty <= 0:
+                    continue
+
+                premium = premium_by_ticker.get(sym, 0)
+                true_cost_per_share = avg_cost - (premium / qty) if qty > 0 else avg_cost
+                true_cost_total = true_cost_per_share * qty
+                raw_pnl = market_val - cost_total
+                adjusted_pnl = market_val - true_cost_total
+                breakeven = true_cost_per_share
+
+                positions.append({
+                    "ticker": sym,
+                    "shares": qty,
+                    "fidelity_avg_cost": round(avg_cost, 2),
+                    "fidelity_cost_total": round(cost_total, 2),
+                    "premium_collected": round(premium, 2),
+                    "true_cost_per_share": round(true_cost_per_share, 2),
+                    "true_cost_total": round(true_cost_total, 2),
+                    "market_value": round(market_val, 2),
+                    "raw_pnl": round(raw_pnl, 2),
+                    "adjusted_pnl": round(adjusted_pnl, 2),
+                    "pnl_difference": round(adjusted_pnl - raw_pnl, 2),
+                    "breakeven_price": round(breakeven, 2),
+                })
+
+    total_premium = round(sum(p["premium_collected"] for p in positions), 2)
+    total_adjustment = round(sum(p["pnl_difference"] for p in positions), 2)
+
+    return {
+        "positions": sorted(positions, key=lambda x: x["premium_collected"], reverse=True),
+        "total_premium": total_premium,
+        "total_adjustment": total_adjustment,
+    }

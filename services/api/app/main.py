@@ -8,6 +8,10 @@ import fastapi
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from app.options_router import router as options_router
+from app.signals_router import router as signals_router
+from app.ai_router import router as ai_router
+from app.extras_router import router as extras_router
+from app.macro_router import router as macro_router
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -72,6 +76,11 @@ app.include_router(photonics_router)
 app.include_router(photonics_technicals_router)
 app.include_router(photonics_portfolio_router)
 app.include_router(photonics_advanced_router)
+app.include_router(signals_router)
+app.include_router(ai_router)
+app.include_router(extras_router)
+app.include_router(macro_router)
+app.include_router(options_router)
 _cors_env = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
 app.add_middleware(
@@ -3929,15 +3938,18 @@ async def startup():
     global rh_logged_in
     # Try auto-login to Robinhood (uses stored session if available)
     if RH_AVAILABLE and RH_EMAIL and RH_PASSWORD:
+        import concurrent.futures
+        def _rh_login():
+            rs.login(username=RH_EMAIL, password=RH_PASSWORD, store_session=True, expiresIn=86400)
         try:
-            rs.login(
-                username=RH_EMAIL,
-                password=RH_PASSWORD,
-                store_session=True,
-                expiresIn=86400,
-            )
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(_rh_login)
+                future.result(timeout=10)
             rh_logged_in = True
             print("✅ Robinhood: auto-logged in (stored session)")
+        except concurrent.futures.TimeoutError:
+            print("⚠️  Robinhood: login timed out (needs MFA?) — POST /rh/login with mfa_code")
+            rh_logged_in = False
         except Exception as e:
             print(f"⚠️  Robinhood: needs MFA — POST /rh/login with mfa_code")
             rh_logged_in = False
