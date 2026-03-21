@@ -12,6 +12,7 @@ from app.signals_router import router as signals_router
 from app.ai_router import router as ai_router
 from app.extras_router import router as extras_router
 from app.macro_router import router as macro_router
+from app.notifications_router import router as notifications_router
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -81,6 +82,7 @@ app.include_router(ai_router)
 app.include_router(extras_router)
 app.include_router(macro_router)
 app.include_router(options_router)
+app.include_router(notifications_router)
 _cors_env = os.getenv("CORS_ORIGINS", "")
 _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] if _cors_env else ["*"]
 app.add_middleware(
