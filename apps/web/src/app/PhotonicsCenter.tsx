@@ -360,7 +360,7 @@ function PhotonicsModels() {
     <div>
       <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["monte-carlo", "factor-model", "kelly"].map(t => (
-          <button key={t} onClick={() => setModelTab(t)} style={{ padding: "8px 16px", background: modelTab === t ? "#0d1117" : "transparent", color: modelTab === t ? S.green : S.muted, border: "none", borderBottom: modelTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
+          <button key={t} onClick={() => setModelTab(t)} style={{ padding: "8px 16px", background: modelTab === t ? bgDeep : "transparent", color: modelTab === t ? S.green : S.muted, border: "none", borderBottom: modelTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
         ))}
       </div>
 
@@ -522,7 +522,7 @@ function PhotonicsSignals() {
     <div>
       <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: "1px solid #30363d" }}>
         {["anomalies", "options-flow", "social-velocity"].map(t => (
-          <button key={t} onClick={() => setSignalTab(t)} style={{ padding: "8px 16px", background: signalTab === t ? "#0d1117" : "transparent", color: signalTab === t ? S.green : S.muted, border: "none", borderBottom: signalTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
+          <button key={t} onClick={() => setSignalTab(t)} style={{ padding: "8px 16px", background: signalTab === t ? bgDeep : "transparent", color: signalTab === t ? S.green : S.muted, border: "none", borderBottom: signalTab === t ? "2px solid #2563eb" : "2px solid transparent", cursor: "pointer", fontFamily: "'DM Sans', sans-serif", fontSize: 12, textTransform: "uppercase" }}>{t.replace("-", " ")}</button>
         ))}
       </div>
 

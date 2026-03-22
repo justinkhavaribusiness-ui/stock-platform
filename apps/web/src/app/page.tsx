@@ -739,6 +739,12 @@ function CryptoPanel() {
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [regime, setRegime] = useState<any>(null);
   const [goals, setGoals] = useState<any[]>([]);
+  // New dashboard widgets
+  const [ceasefire, setCeasefire] = useState<any>(null);
+  const [deadWeight, setDeadWeight] = useState<any>(null);
+  const [earningsCountdown, setEarningsCountdown] = useState<any>(null);
+  const [goal50k, setGoal50k] = useState<any>(null);
+  const [ccIncome, setCcIncome] = useState<any>(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalForm, setGoalForm] = useState({ name: "", target_amount: "", type: "portfolio_value" });
   const [tab, setTab] = useState("dashboard");
@@ -1499,6 +1505,14 @@ function CryptoPanel() {
   const loadRegime = useCallback(async () => {
     try { const r = await fetch(`${BASE}/ai/regime`); const d = await r.json(); setRegime(d); } catch {}
   }, []);
+  // New dashboard widget loaders
+  const loadCeasefire = useCallback(async () => { try { const r = await fetch(`${BASE}/macro/ceasefire-probability`); setCeasefire(await r.json()); } catch {} }, []);
+  const loadDeadWeight = useCallback(async () => { try { const r = await fetch(`${BASE}/macro/dead-weight`); setDeadWeight(await r.json()); } catch {} }, []);
+  const loadEarningsCountdown = useCallback(async () => { try { const r = await fetch(`${BASE}/macro/earnings-countdown`); setEarningsCountdown(await r.json()); } catch {} }, []);
+  const loadGoal50k = useCallback(async () => { try { const r = await fetch(`${BASE}/macro/goal-50k`); setGoal50k(await r.json()); } catch {} }, []);
+  const loadCcIncome = useCallback(async () => { try { const r = await fetch(`${BASE}/macro/cc-income`); setCcIncome(await r.json()); } catch {} }, []);
+  // Load new dashboard widgets after app boots
+  useEffect(() => { if (appReady) { loadEarningsCountdown(); loadGoal50k(); loadDeadWeight(); loadCcIncome(); } }, [appReady]);
 
   // ── Init (tracked loading) ──────────────────────────────────────────
   useEffect(() => {
@@ -1537,6 +1551,10 @@ function CryptoPanel() {
       { fn: loadNewsIntelligence, label: "NEWS INTELLIGENCE" },
       { fn: loadBookmarks, label: "BOOKMARKS" },
       { fn: loadMarketPulse, label: "MARKET PULSE" },
+      { fn: loadEarningsCountdown, label: "EARNINGS COUNTDOWN" },
+      { fn: loadGoal50k, label: "$50K GOAL" },
+      { fn: loadDeadWeight, label: "DEAD WEIGHT SCAN" },
+      { fn: loadCcIncome, label: "CC INCOME" },
     ];
     let completed = 0;
     const minDelay = new Promise(r => setTimeout(r, 2500));
@@ -2265,6 +2283,91 @@ function CryptoPanel() {
                   </div>
                 )}
 
+                {/* ── Earnings Countdown (always show) ── */}
+                <div className={`border rounded-lg p-3 ${cardBg}`}>
+                  <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>Earnings Countdown</div>
+                  <div className={`text-xs ${dimText}`}>{earningsCountdown ? `${earningsCountdown.earnings?.length || 0} upcoming` : "Loading..."}</div>
+                  {earningsCountdown?.earnings?.slice(0, 5).map((e: any) => (
+                    <div key={e.ticker} className="flex items-center gap-2 text-xs mt-1">
+                      <span className={`font-mono font-bold ${headText}`}>{e.ticker}</span>
+                      <span className={`text-[10px] font-mono ${dimText}`}>{e.days_until}d</span>
+                      <span className={`flex-1 text-[10px] truncate ${dimText}`}>{e.catalyst}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── $50K Goal Tracker ── */}
+                {goal50k && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>$50K Goal</div>
+                    <div className="flex items-baseline gap-2 mb-2">
+                      <span className={`text-lg font-bold font-mono ${headText}`}>${fmt(goal50k.current)}</span>
+                      <span className={`text-[10px] ${dimText}`}>/ $50,000</span>
+                      <span className={`text-[10px] font-mono ml-auto ${goal50k.on_track ? "text-emerald-500" : "text-amber-500"}`}>{goal50k.on_track ? "ON TRACK" : "BEHIND"}</span>
+                    </div>
+                    <div className="w-full h-2 rounded-full overflow-hidden mb-2" style={{background: dark ? "#27272a" : "#e5e7eb"}}>
+                      <div className="h-full rounded-full transition-all bg-gradient-to-r from-blue-500 to-emerald-500" style={{width: `${goal50k.progress_pct}%`}} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-[10px]">
+                      <div><span className={dimText}>Remaining</span><div className={`font-mono font-medium ${headText}`}>${fmt(goal50k.remaining)}</div></div>
+                      <div><span className={dimText}>Weekly Rate</span><div className={`font-mono font-medium ${goal50k.weekly_rate >= 0 ? "text-emerald-500" : "text-red-500"}`}>${fmt(goal50k.weekly_rate)}</div></div>
+                      <div><span className={dimText}>ETA</span><div className={`font-mono font-medium ${headText}`}>{goal50k.est_completion !== "N/A" ? new Date(goal50k.est_completion).toLocaleDateString("en-US", {month:"short",year:"2-digit"}) : "—"}</div></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Earnings Countdown ── */}
+                {earningsCountdown?.earnings?.length > 0 && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>Earnings Countdown</div>
+                    <div className="space-y-1.5">
+                      {earningsCountdown.earnings.slice(0, 5).map((e: any) => (
+                        <div key={e.ticker} className="flex items-center gap-2 text-xs">
+                          <span className={`font-mono font-bold w-10 ${headText}`}>{e.ticker}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                            e.urgency === "NOW" ? (dark ? "bg-red-900 text-red-300" : "bg-red-100 text-red-700") :
+                            e.urgency === "THIS_WEEK" ? (dark ? "bg-amber-900 text-amber-300" : "bg-amber-100 text-amber-700") :
+                            e.urgency === "SOON" ? (dark ? "bg-blue-900 text-blue-300" : "bg-blue-100 text-blue-700") :
+                            (dark ? "bg-zinc-800 text-zinc-400" : "bg-gray-100 text-gray-600")
+                          }`}>{e.days_until}d</span>
+                          <span className={`flex-1 text-[10px] truncate ${dimText}`}>{e.catalyst}</span>
+                          <span className={`text-[10px] font-mono ${dimText}`}>{e.date?.slice(5)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ── CC Income ── */}
+                {ccIncome && ccIncome.total_income > 0 && (
+                  <div className={`border rounded-lg p-3 ${cardBg}`}>
+                    <div className={`text-[10px] uppercase tracking-wider mb-2 font-medium ${dimText}`}>CC Income</div>
+                    <div className="flex items-baseline gap-3 mb-1.5">
+                      <div><div className={`text-[10px] ${dimText}`}>Total</div><div className="text-lg font-bold font-mono text-emerald-500">${fmt(ccIncome.total_income)}</div></div>
+                      <div><div className={`text-[10px] ${dimText}`}>Avg/Week</div><div className={`text-sm font-mono font-medium ${headText}`}>${fmt(ccIncome.avg_weekly)}</div></div>
+                      <div><div className={`text-[10px] ${dimText}`}>Annualized</div><div className={`text-sm font-mono font-medium ${headText}`}>${fmt(ccIncome.annualized)}</div></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Dead Weight Alert ── */}
+                {deadWeight?.dead_weight?.length > 0 && (
+                  <div className={`border rounded-lg p-3 ${dark ? "border-red-900/50 bg-red-950/20" : "border-red-200 bg-red-50"}`}>
+                    <div className="text-[10px] uppercase tracking-wider mb-2 font-medium text-red-500">Dead Weight ({deadWeight.dead_weight.length})</div>
+                    <div className="space-y-1">
+                      {deadWeight.dead_weight.slice(0, 4).map((d: any) => (
+                        <div key={d.ticker} className="flex items-center gap-2 text-xs">
+                          <span className={`font-mono font-bold w-10 ${headText}`}>{d.ticker}</span>
+                          <span className={`text-[10px] font-mono ${d.gain_pct >= 0 ? "text-emerald-500" : "text-red-500"}`}>{d.gain_pct >= 0 ? "+" : ""}{d.gain_pct}%</span>
+                          <span className={`flex-1 text-[10px] truncate ${dimText}`}>{d.reasons[0]}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${d.action === "SELL" ? "bg-red-500/20 text-red-400" : (dark ? "bg-amber-900 text-amber-400" : "bg-amber-100 text-amber-700")}`}>{d.action}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className={`mt-1.5 pt-1.5 border-t text-[10px] ${dimText} ${borderDim}`}>${fmt(deadWeight.total_dead_capital)} locked in dead weight</div>
+                  </div>
+                )}
+
                 {/* Quick Stats */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className={`border rounded-lg p-3 ${cardBg}`}>
@@ -2329,8 +2432,101 @@ function CryptoPanel() {
                     </div>
                   </div>
                 )}
+
               </div>
             </div>
+
+            {/* ── War / Ceasefire Probability (Full Width) ── */}
+            {ceasefire && (
+              <div className={`border rounded-lg p-4 ${cardBg}`}>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className={`text-[10px] uppercase tracking-wider font-medium ${dimText}`}>War / Ceasefire Probability</div>
+                    <div className={`text-xs mt-0.5 ${dimText}`}>Derived from live oil, VIX, gold, and yield data</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[10px] px-2 py-1 rounded font-mono font-bold ${
+                      ceasefire.war_intensity > 70 ? "bg-red-500/20 text-red-400" :
+                      ceasefire.war_intensity > 40 ? "bg-amber-500/20 text-amber-400" :
+                      "bg-emerald-500/20 text-emerald-400"
+                    }`}>WAR INTENSITY: {ceasefire.war_intensity}/100</span>
+                    <button onClick={loadCeasefire} className={`text-[10px] px-2 py-1 rounded ${dark?"text-zinc-400 hover:bg-zinc-800":"text-zinc-500 hover:bg-zinc-100"}`}>Refresh</button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {ceasefire.scenarios && Object.entries(ceasefire.scenarios).map(([key, s]: [string, any]) => (
+                    <div key={key} className={`rounded-lg p-3 border ${dark ? "border-zinc-800" : "border-gray-200"}`} style={{borderLeftWidth: 3, borderLeftColor: s.color}}>
+                      <div className="text-[10px] font-medium uppercase" style={{color: s.color}}>{s.label}</div>
+                      <div className="text-3xl font-black font-mono mt-1" style={{color: s.color}}>{s.probability}%</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Market signals grid */}
+                <div className="grid grid-cols-5 gap-2 mb-3">
+                  {ceasefire.market_signals?.oil?.brent?.price && (
+                    <div className={`rounded-lg p-2.5 ${dark ? "bg-zinc-800/50" : "bg-gray-50"}`}>
+                      <div className={`text-[9px] uppercase ${dimText}`}>Brent</div>
+                      <div className={`text-sm font-bold font-mono ${headText}`}>${ceasefire.market_signals.oil.brent.price}</div>
+                      <div className={`text-[10px] font-mono ${clr(ceasefire.market_signals.oil.brent.change_pct)}`}>{pct(ceasefire.market_signals.oil.brent.change_pct)}</div>
+                    </div>
+                  )}
+                  {ceasefire.market_signals?.oil?.wti?.price && (
+                    <div className={`rounded-lg p-2.5 ${dark ? "bg-zinc-800/50" : "bg-gray-50"}`}>
+                      <div className={`text-[9px] uppercase ${dimText}`}>WTI</div>
+                      <div className={`text-sm font-bold font-mono ${headText}`}>${ceasefire.market_signals.oil.wti.price}</div>
+                      <div className={`text-[10px] font-mono ${clr(ceasefire.market_signals.oil.wti.change_pct)}`}>{pct(ceasefire.market_signals.oil.wti.change_pct)}</div>
+                    </div>
+                  )}
+                  {ceasefire.market_signals?.oil?.natgas?.price && (
+                    <div className={`rounded-lg p-2.5 ${dark ? "bg-zinc-800/50" : "bg-gray-50"}`}>
+                      <div className={`text-[9px] uppercase ${dimText}`}>NatGas</div>
+                      <div className={`text-sm font-bold font-mono ${headText}`}>${ceasefire.market_signals.oil.natgas.price}</div>
+                      <div className={`text-[10px] font-mono ${clr(ceasefire.market_signals.oil.natgas.change_pct)}`}>{pct(ceasefire.market_signals.oil.natgas.change_pct)}</div>
+                    </div>
+                  )}
+                  {ceasefire.market_signals?.gold?.price && (
+                    <div className={`rounded-lg p-2.5 ${dark ? "bg-zinc-800/50" : "bg-gray-50"}`}>
+                      <div className={`text-[9px] uppercase ${dimText}`}>Gold</div>
+                      <div className={`text-sm font-bold font-mono ${headText}`}>${ceasefire.market_signals.gold.price}</div>
+                      <div className={`text-[10px] font-mono ${clr(ceasefire.market_signals.gold.change_pct)}`}>{pct(ceasefire.market_signals.gold.change_pct)}</div>
+                    </div>
+                  )}
+                  {ceasefire.market_signals?.vix?.current && (
+                    <div className={`rounded-lg p-2.5 ${dark ? "bg-zinc-800/50" : "bg-gray-50"}`}>
+                      <div className={`text-[9px] uppercase ${dimText}`}>VIX</div>
+                      <div className={`text-sm font-bold font-mono ${
+                        ceasefire.market_signals.vix.current > 30 ? "text-red-500" :
+                        ceasefire.market_signals.vix.current > 20 ? "text-amber-500" : "text-emerald-500"
+                      }`}>{ceasefire.market_signals.vix.current}</div>
+                      <div className={`text-[10px] ${dimText}`}>{ceasefire.market_signals.vix.level}</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* AI Analysis */}
+                {ceasefire.ai_analysis && (
+                  <div className={`rounded-lg p-3 ${dark ? "bg-zinc-800/50 border border-zinc-700" : "bg-gray-50 border border-gray-200"}`}>
+                    <div className={`text-xs font-bold mb-2 ${headText}`}>{ceasefire.ai_analysis.headline}</div>
+                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                      {ceasefire.ai_analysis.oil_read && <div><span className="font-semibold text-amber-500">Oil:</span> <span className={dimText}>{ceasefire.ai_analysis.oil_read}</span></div>}
+                      {ceasefire.ai_analysis.vix_read && <div><span className="font-semibold text-red-400">VIX:</span> <span className={dimText}>{ceasefire.ai_analysis.vix_read}</span></div>}
+                      {ceasefire.ai_analysis.gold_read && <div><span className="font-semibold text-yellow-500">Gold:</span> <span className={dimText}>{ceasefire.ai_analysis.gold_read}</span></div>}
+                      {ceasefire.ai_analysis.fed_impact && <div><span className="font-semibold text-blue-400">Fed:</span> <span className={dimText}>{ceasefire.ai_analysis.fed_impact}</span></div>}
+                    </div>
+                    {ceasefire.ai_analysis.trade_signal && (
+                      <div className={`mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg ${dark ? "bg-blue-950 text-blue-300 border border-blue-800" : "bg-blue-50 text-blue-700 border border-blue-200"}`}>
+                        SIGNAL: {ceasefire.ai_analysis.trade_signal}
+                      </div>
+                    )}
+                    {ceasefire.ai_analysis.risk_event_next_48h && (
+                      <div className={`mt-1.5 text-[10px] ${dimText}`}>48H RISK: {ceasefire.ai_analysis.risk_event_next_48h}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
