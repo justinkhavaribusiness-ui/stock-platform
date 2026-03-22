@@ -1138,6 +1138,8 @@ function CryptoPanel() {
   // AI Sub-tab expanded
   const [aiSubTab2, setAiSubTab2] = useState<"analysis"|"chat"|"deepdive"|"rebalance"|"earnsummary"|"coach"|"scanner"|"riskalerts"|"senttime"|"predict"|"deepreview"|"doctor"|"narrative">("analysis");
   const [ddTicker, setDdTicker] = useState("");
+  const [nextDayOutlook, setNextDayOutlook] = useState<any>(null);
+  const loadOutlook = useCallback(async () => { try { const r = await fetch(`${BASE}/ai/next-day-outlook`); setNextDayOutlook(await r.json()); } catch {} }, []);
   const [ddResult, setDdResult] = useState<any>(null);
   const [ddLoading, setDdLoading] = useState(false);
   const runDeepDive = async (ticker?: string) => {
@@ -1517,6 +1519,7 @@ function CryptoPanel() {
       { fn: loadFidAccounts, label: "ACCOUNTS" },
       { fn: loadMmStatus, label: "MARKET MAKER" },
       { fn: loadGoals, label: "GOALS" },
+      { fn: loadOutlook, label: "OUTLOOK" },
       { fn: loadNamedWatchlists, label: "WATCHLISTS" },
       { fn: loadSavedScreens, label: "SCREENERS" },
       { fn: loadAllAccounts, label: "ALL ACCOUNTS" },
@@ -1963,6 +1966,57 @@ function CryptoPanel() {
         {tab==="dashboard" && (
           <div className="space-y-5">
             <PersonalHeader dark={dark} />
+
+            {/* ── Next Day Outlook Banner ── */}
+            {nextDayOutlook?.direction && (
+              <div className={`rounded-xl p-4 border ${
+                nextDayOutlook.direction === "bullish"
+                  ? (dark ? "border-green-800 bg-green-950/40" : "border-green-200 bg-green-50")
+                  : nextDayOutlook.direction === "bearish"
+                  ? (dark ? "border-red-800 bg-red-950/40" : "border-red-200 bg-red-50")
+                  : (dark ? "border-zinc-700 bg-zinc-800/40" : "border-gray-200 bg-gray-50")
+              }`}>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className={`text-2xl font-black font-mono uppercase ${
+                    nextDayOutlook.direction === "bullish" ? "text-emerald-500" : nextDayOutlook.direction === "bearish" ? "text-red-500" : (dark ? "text-zinc-400" : "text-gray-500")
+                  }`}>
+                    {nextDayOutlook.direction === "bullish" ? "BULLISH" : nextDayOutlook.direction === "bearish" ? "BEARISH" : "NEUTRAL"}
+                  </span>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                    nextDayOutlook.confidence > 70 ? (dark ? "bg-emerald-900 text-emerald-300" : "bg-emerald-100 text-emerald-700")
+                    : nextDayOutlook.confidence > 40 ? (dark ? "bg-yellow-900 text-yellow-300" : "bg-yellow-100 text-yellow-700")
+                    : (dark ? "bg-zinc-700 text-zinc-300" : "bg-gray-200 text-gray-600")
+                  }`}>
+                    {nextDayOutlook.confidence}% confidence
+                  </span>
+                  <span className={`text-[10px] ml-auto ${dimText}`}>
+                    {nextDayOutlook.timestamp ? new Date(nextDayOutlook.timestamp).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+                <div className={`text-sm font-bold mb-2 ${dark ? "text-white" : "text-gray-900"}`}>
+                  {nextDayOutlook.headline}
+                </div>
+                <div className={`text-xs leading-relaxed mb-3 ${dark ? "text-zinc-400" : "text-gray-600"}`}>
+                  {nextDayOutlook.reasoning}
+                </div>
+                <div className="flex gap-4 flex-wrap text-[11px]">
+                  {nextDayOutlook.key_levels?.spy_support && (
+                    <span className={dimText}>SPY Support: <strong className={`font-mono ${dark ? "text-red-400" : "text-red-600"}`}>${nextDayOutlook.key_levels.spy_support}</strong></span>
+                  )}
+                  {nextDayOutlook.key_levels?.spy_resistance && (
+                    <span className={dimText}>Resistance: <strong className={`font-mono ${dark ? "text-green-400" : "text-green-600"}`}>${nextDayOutlook.key_levels.spy_resistance}</strong></span>
+                  )}
+                  {nextDayOutlook.vix_signal && (
+                    <span className={dimText}>VIX: <strong className={dark ? "text-yellow-400" : "text-yellow-600"}>{nextDayOutlook.vix_signal}</strong></span>
+                  )}
+                </div>
+                {nextDayOutlook.portfolio_action && (
+                  <div className={`mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg ${dark ? "bg-blue-950 text-blue-300 border border-blue-800" : "bg-blue-50 text-blue-700 border border-blue-200"}`}>
+                    ACTION: {nextDayOutlook.portfolio_action}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ── Portfolio Summary Bar ── */}
             {fidelitySummary && (

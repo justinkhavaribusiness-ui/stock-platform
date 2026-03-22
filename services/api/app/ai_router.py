@@ -1636,3 +1636,133 @@ Be brutally honest. Don't hedge everything. Give real probabilities and real tra
     # Cache for 5 minutes
     rdb.setex(cache_key, 300, json.dumps(result))
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  NEXT DAY OUTLOOK — INSTITUTIONAL GRADE DASHBOARD BANNER
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/next-day-outlook")
+async def next_day_outlook():
+    """Institutional-grade next trading day outlook for dashboard banner."""
+    cache_key = "cache:next-day-outlook"
+    cached = rdb.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
+    if not yf:
+        raise HTTPException(500, "yfinance not available")
+
+    def safe_data(sym):
+        try:
+            t = yf.Ticker(sym)
+            h = t.history(period="1mo")
+            if h.empty: return {}
+            prices = h["Close"].tolist()
+            last = prices[-1]
+            prev = prices[-2] if len(prices) > 1 else last
+            sma5 = sum(prices[-5:]) / min(5, len(prices))
+            sma20 = sum(prices[-20:]) / min(20, len(prices))
+            # RSI calculation
+            gains, losses = [], []
+            for i in range(1, min(15, len(prices))):
+                diff = prices[i] - prices[i-1]
+                if diff > 0: gains.append(diff)
+                else: losses.append(abs(diff))
+            avg_gain = sum(gains) / 14 if gains else 0.001
+            avg_loss = sum(losses) / 14 if losses else 0.001
+            rsi = 100 - (100 / (1 + avg_gain / avg_loss))
+            return {
+                "price": round(last, 2),
+                "change_pct": round((last - prev) / prev * 100, 2),
+                "above_sma5": last > sma5,
+                "above_sma20": last > sma20,
+                "rsi": round(rsi, 1),
+                "trend": "up" if last > sma5 > sma20 else "down" if last < sma5 < sma20 else "mixed",
+            }
+        except Exception:
+            return {}
+
+    spy = safe_data("SPY")
+    qqq = safe_data("QQQ")
+    vix = safe_data("^VIX")
+    oil = safe_data("BZ=F")
+    tnx = safe_data("^TNX")
+    dxy = safe_data("DX-Y.NYB")
+    gold = safe_data("GC=F")
+    iwm = safe_data("IWM")
+
+    # Portfolio tickers
+    portfolio = []
+    try:
+        import pathlib, csv
+        csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+        if csv_path.exists():
+            with open(csv_path) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    sym = (row.get("Symbol") or "").strip()
+                    if sym and "SPAXX" not in sym and sym != "Cash" and not sym.startswith("-"):
+                        portfolio.append(sym)
+    except Exception:
+        pass
+
+    context = f"""You are an institutional macro strategist giving a next-day trading outlook.
+
+CURRENT DATA:
+SPY: ${spy.get('price','?')} ({spy.get('change_pct','?')}% today) | RSI: {spy.get('rsi','?')} | Trend: {spy.get('trend','?')} | Above 5d MA: {spy.get('above_sma5','?')} | Above 20d MA: {spy.get('above_sma20','?')}
+QQQ: ${qqq.get('price','?')} ({qqq.get('change_pct','?')}%) | RSI: {qqq.get('rsi','?')} | Trend: {qqq.get('trend','?')}
+IWM: ${iwm.get('price','?')} ({iwm.get('change_pct','?')}%) | Trend: {iwm.get('trend','?')}
+VIX: {vix.get('price','?')} ({vix.get('change_pct','?')}%) | RSI: {vix.get('rsi','?')}
+Brent Oil: ${oil.get('price','?')} ({oil.get('change_pct','?')}%)
+10Y Yield: {tnx.get('price','?')}% ({tnx.get('change_pct','?')}%)
+DXY: {dxy.get('price','?')} ({dxy.get('change_pct','?')}%)
+Gold: ${gold.get('price','?')} ({gold.get('change_pct','?')}%)
+
+Portfolio: {', '.join(portfolio[:15])}
+Today: {datetime.now().strftime('%A, %B %d, %Y')}
+
+Return ONLY valid JSON:
+{{
+  "direction": "bullish" | "bearish" | "neutral",
+  "confidence": number 1-100,
+  "headline": "max 12 word summary of what to expect tomorrow",
+  "reasoning": "2-3 sentences of institutional-grade analysis: dealer positioning, put/call skew, macro catalysts, technicals. Reference specific levels.",
+  "key_levels": {{"spy_support": number, "spy_resistance": number}},
+  "risks": "one sentence on what could go wrong",
+  "portfolio_action": "one specific action for tomorrow related to the trader's portfolio",
+  "vix_signal": "what VIX is telling you about tomorrow",
+  "oil_signal": "what oil means for rate-sensitive positions"
+}}"""
+
+    try:
+        key = os.getenv("ANTHROPIC_API_KEY", "") or ANTHROPIC_KEY
+        if not key:
+            env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+            if os.path.exists(env_path):
+                with open(env_path) as f:
+                    for line in f:
+                        if line.strip().startswith("ANTHROPIC_API_KEY="):
+                            key = line.strip().split("=", 1)[1]
+
+        client = anthropic.Anthropic(api_key=key)
+        msg = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": context}],
+        )
+        raw = msg.content[0].text.strip()
+        result = _clean_json(raw)
+    except json.JSONDecodeError:
+        result = {"direction": "neutral", "confidence": 50, "headline": "Analysis unavailable", "reasoning": raw if 'raw' in dir() else "Parse error"}
+    except Exception as e:
+        result = {"direction": "neutral", "confidence": 50, "headline": "Analysis unavailable", "reasoning": str(e)}
+
+    result["macro"] = {
+        "spy": spy, "qqq": qqq, "vix": vix, "oil": oil, "tnx": tnx, "gold": gold,
+    }
+    result["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+    # Cache for 10 minutes
+    rdb.setex(cache_key, 600, json.dumps(result))
+    return result
