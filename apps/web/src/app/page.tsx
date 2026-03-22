@@ -33,6 +33,7 @@ import NotifCenter from "./NotifCenter";
 import TrumpMonitor from "./TrumpMonitor";
 import PositionSizer from "./PositionSizer";
 import SectorExposure from "./SectorExposure";
+import Institutional from "./Institutional";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1823,6 +1824,7 @@ function CryptoPanel() {
     { id:"trump",       label:"Trump",      icon:"🏛" },
     { id:"possizer",    label:"Sizer",      icon:"📐" },
     { id:"sectorexp",   label:"Exposure",   icon:"🎯" },
+    { id:"instl",       label:"Inst.",      icon:"🏦" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
@@ -1833,7 +1835,7 @@ function CryptoPanel() {
     {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct","sectorexp"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt","tradereplay"].includes(t.id))},
     {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis","optchain","ccincome"].includes(t.id))},
-    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor","mktintel","trump"].includes(t.id))},
+    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor","mktintel","trump","instl"].includes(t.id))},
     {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality","pricealerts","earnprep","notifcenter"].includes(t.id))},
     {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates","possizer"].includes(t.id))},
   ];
@@ -7617,6 +7619,9 @@ function CryptoPanel() {
 
         {/* ── SECTOR EXPOSURE ────────────────────────────── */}
         {tab==="sectorexp" && <SectorExposure dark={dark} BASE={BASE} />}
+
+        {/* ── INSTITUTIONAL ANALYTICS ────────────────────── */}
+        {tab==="instl" && <Institutional dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (
