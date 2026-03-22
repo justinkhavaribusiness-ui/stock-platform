@@ -1,5 +1,18 @@
 services:
   - type: web
+    name: stock-platform-web
+    runtime: node
+    rootDir: apps/web
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://stock-platform-8o8c.onrender.com
+      - key: PORT
+        value: "3000"
+    plan: free
+
+  - type: web
     name: stock-platform-api
     runtime: python
     rootDir: services/api
