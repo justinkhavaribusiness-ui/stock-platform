@@ -30,6 +30,9 @@ import EarningsPrep from "./EarningsPrep";
 import MultiAccount from "./MultiAccount";
 import MarketIntel from "./MarketIntel";
 import NotifCenter from "./NotifCenter";
+import TrumpMonitor from "./TrumpMonitor";
+import PositionSizer from "./PositionSizer";
+import SectorExposure from "./SectorExposure";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1814,6 +1817,9 @@ function CryptoPanel() {
     { id:"multiacct",   label:"Accounts",    icon:"🏦" },
     { id:"mktintel",    label:"Intel",       icon:"🧠" },
     { id:"notifcenter", label:"Alerts Hub",  icon:"🔔" },
+    { id:"trump",       label:"Trump",      icon:"🏛" },
+    { id:"possizer",    label:"Sizer",      icon:"📐" },
+    { id:"sectorexp",   label:"Exposure",   icon:"🎯" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
@@ -1821,12 +1827,12 @@ function CryptoPanel() {
     {cat:"Charts", items:tabs.filter(t=>["charts","robinhood","quotes","watchlist","heatmap"].includes(t.id))},
     {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment"].includes(t.id))},
     {cat:"Photonics", items:tabs.filter(t=>["photonics","screener","analytics"].includes(t.id))},
-    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct"].includes(t.id))},
+    {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct","sectorexp"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt","tradereplay"].includes(t.id))},
     {cat:"Options", items:tabs.filter(t=>["options","optcalc","greeks","multileg","ivrank","skew","wheel","costbasis","optchain","ccincome"].includes(t.id))},
-    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor","mktintel"].includes(t.id))},
+    {cat:"Markets", items:tabs.filter(t=>["sectors","crypto","breadth","macro","correlation","futures","insider","darkpool","warmacro","geomonitor","mktintel","trump"].includes(t.id))},
     {cat:"Planning", items:tabs.filter(t=>["plans","alerts","earnings","calendar","divs","seasonality","pricealerts","earnprep","notifcenter"].includes(t.id))},
-    {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates"].includes(t.id))},
+    {cat:"Risk", items:tabs.filter(t=>["possize","riskparity","stresstest","riskruin","bracket","peers","leaderboard","report","webhooks","templates","possizer"].includes(t.id))},
   ];
 
   // Sync activeCategory when tab changes
@@ -7548,6 +7554,15 @@ function CryptoPanel() {
 
         {/* ── NOTIFICATION CENTER & THESIS VAULT ─────────── */}
         {tab==="notifcenter" && <NotifCenter dark={dark} BASE={BASE} />}
+
+        {/* ── TRUMP MONITOR ──────────────────────────────── */}
+        {tab==="trump" && <TrumpMonitor dark={dark} BASE={BASE} />}
+
+        {/* ── POSITION SIZER ─────────────────────────────── */}
+        {tab==="possizer" && <PositionSizer dark={dark} BASE={BASE} />}
+
+        {/* ── SECTOR EXPOSURE ────────────────────────────── */}
+        {tab==="sectorexp" && <SectorExposure dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (

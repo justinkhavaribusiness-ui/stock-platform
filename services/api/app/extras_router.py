@@ -1569,3 +1569,263 @@ async def add_ibkr_position(pos: IBKRPosition):
 @router.delete("/multi-account/ibkr/{pos_id}")
 async def delete_ibkr_position(pos_id: str):
     return _list_delete(IBKR_KEY, "id", pos_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  TRUMP TRUTH SOCIAL MONITOR
+# ═══════════════════════════════════════════════════════════════════════
+TRUMP_POSTS_KEY = "trump:posts"
+
+@router.get("/trump-monitor")
+async def trump_monitor():
+    """Fetch recent Trump Truth Social posts and analyze market impact with AI."""
+    import httpx
+
+    # Fetch from Truth Social RSS/API proxy
+    posts = []
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Try multiple Truth Social RSS sources
+            for url in [
+                "https://truthsocial.com/api/v1/accounts/107780257626128497/statuses?limit=10",
+                "https://nitter.privacydev.net/realDonaldTrump/rss",
+            ]:
+                try:
+                    r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+                    if r.status_code == 200:
+                        data = r.json() if "json" in r.headers.get("content-type", "") else []
+                        if isinstance(data, list):
+                            for post in data[:10]:
+                                content = post.get("content", "") or post.get("text", "")
+                                # Strip HTML tags
+                                import re
+                                clean = re.sub(r"<[^>]+>", "", content).strip()
+                                if clean:
+                                    posts.append({
+                                        "text": clean[:500],
+                                        "created_at": post.get("created_at", ""),
+                                        "id": post.get("id", ""),
+                                    })
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    # If no posts fetched, check Redis cache for manually added posts
+    cached = [json.loads(r) for r in rdb.lrange(TRUMP_POSTS_KEY, 0, -1)]
+    all_posts = posts + cached
+
+    # AI analysis of posts
+    analysis = None
+    if all_posts:
+        try:
+            import anthropic
+            key = os.getenv("ANTHROPIC_API_KEY", "")
+            if not key:
+                env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+                if os.path.exists(env_path):
+                    with open(env_path) as f:
+                        for line in f:
+                            if line.strip().startswith("ANTHROPIC_API_KEY="):
+                                key = line.strip().split("=", 1)[1]
+
+            if key:
+                client = anthropic.Anthropic(api_key=key)
+                posts_text = "\n\n".join([f"[{p.get('created_at','')}] {p['text']}" for p in all_posts[:10]])
+                msg = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1000,
+                    messages=[{"role": "user", "content": f"""Analyze these recent Trump posts for market impact. Return JSON:
+{{"overall_sentiment": "bullish" | "bearish" | "neutral",
+"market_impact": "high" | "medium" | "low",
+"summary": "one sentence on what this means for markets",
+"key_topics": ["topic1", "topic2"],
+"trade_signals": [{{"signal": "description", "ticker": "SPY/OIL/etc", "direction": "bullish/bearish"}}],
+"urgency": "immediate" | "watch" | "none"}}
+
+Posts:
+{posts_text}
+
+Return ONLY valid JSON."""}],
+                )
+                text = msg.content[0].text.strip()
+                if text.startswith("{"):
+                    analysis = json.loads(text)
+        except Exception as e:
+            analysis = {"error": str(e)}
+
+    return {
+        "posts": all_posts[:10],
+        "analysis": analysis,
+        "post_count": len(all_posts),
+        "updated_at": _now(),
+    }
+
+class TrumpPost(BaseModel):
+    text: str
+    source: str = "manual"
+
+@router.post("/trump-monitor/add")
+async def add_trump_post(post: TrumpPost):
+    """Manually add a Trump post for analysis (paste from Truth Social)."""
+    entry = {"text": post.text, "source": post.source, "created_at": _now(), "id": _make_id()}
+    rdb.rpush(TRUMP_POSTS_KEY, json.dumps(entry))
+    rdb.ltrim(TRUMP_POSTS_KEY, -50, -1)
+    return entry
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  POSITION SIZING CALCULATOR
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/position-sizer")
+async def position_sizer(
+    ticker: str = "SPY",
+    account_value: float = 29000,
+    risk_pct: float = 2.0,
+    entry: float = 0,
+    stop: float = 0,
+):
+    """Calculate optimal position size based on risk management."""
+    try:
+        import yfinance as yf
+        t = yf.Ticker(ticker.upper())
+        hist = t.history(period="1d")
+        price = float(hist["Close"].iloc[-1]) if not hist.empty else entry
+    except Exception:
+        price = entry or 0
+
+    if not price:
+        return {"error": "Could not get price"}
+
+    entry_price = entry if entry > 0 else price
+    stop_price = stop if stop > 0 else entry_price * 0.95  # default 5% stop
+
+    risk_per_share = abs(entry_price - stop_price)
+    risk_amount = account_value * (risk_pct / 100)
+
+    if risk_per_share <= 0:
+        return {"error": "Stop loss must be different from entry"}
+
+    shares = int(risk_amount / risk_per_share)
+    position_value = shares * entry_price
+    pct_of_account = round(position_value / account_value * 100, 1)
+
+    # Kelly criterion estimate
+    # Assume 55% win rate, 2:1 reward/risk for Kelly
+    win_rate = 0.55
+    rr_ratio = 2.0
+    kelly = round((win_rate - (1 - win_rate) / rr_ratio) * 100, 1)
+    kelly_shares = int(account_value * (kelly / 100) / entry_price)
+
+    return {
+        "ticker": ticker.upper(),
+        "price": round(price, 2),
+        "entry": round(entry_price, 2),
+        "stop": round(stop_price, 2),
+        "risk_per_share": round(risk_per_share, 2),
+        "account_value": account_value,
+        "risk_pct": risk_pct,
+        "risk_amount": round(risk_amount, 2),
+        "shares": shares,
+        "position_value": round(position_value, 2),
+        "pct_of_account": pct_of_account,
+        "kelly_shares": kelly_shares,
+        "kelly_pct": kelly,
+        "round_lot": shares >= 100,
+        "can_sell_cc": shares >= 100,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  SECTOR / THESIS EXPOSURE HEATMAP
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/sector-exposure")
+async def sector_exposure():
+    """Show real sector + thesis concentration with correlation risk."""
+    import pathlib, csv as csvmod
+
+    # Load positions
+    csv_path = pathlib.Path(__file__).parent.parent / "data" / "positions.csv"
+    if not csv_path.exists():
+        return {"groups": [], "warnings": []}
+
+    positions = []
+    with open(csv_path) as f:
+        reader = csvmod.DictReader(f)
+        for row in reader:
+            sym = (row.get("Symbol") or "").strip()
+            if not sym or "SPAXX" in sym or sym == "Cash" or sym.startswith("-"):
+                continue
+            try:
+                val = float((row.get("Current Value") or "0").replace("$", "").replace(",", "").replace("+", "") or 0)
+            except (ValueError, TypeError):
+                continue
+            positions.append({"ticker": sym, "value": round(val, 2)})
+
+    total = sum(p["value"] for p in positions) or 1
+
+    # Define thesis groups (from our conversations)
+    thesis_groups = {
+        "AI Infrastructure": ["NBIS", "NVDA", "AMZN"],
+        "Photonics / Optical": ["COHR", "AAOI", "AXTI", "LWLG", "CIEN", "TSEM"],
+        "Photonics Speculative": ["AEHR", "POET", "LITX"],
+        "Rate-Sensitive Fintech": ["SOFI", "OSCR", "HIMS"],
+        "Value / Income": ["KSPI", "QCOM"],
+        "Crypto / Energy": ["BMNR", "SOXL"],
+        "Hedges / ETFs": ["SPY", "KORU"],
+        "Other": [],
+    }
+
+    # Assign positions to groups
+    assigned = set()
+    groups = []
+    for group_name, tickers in thesis_groups.items():
+        group_positions = [p for p in positions if p["ticker"] in tickers]
+        group_value = sum(p["value"] for p in group_positions)
+        if group_positions:
+            groups.append({
+                "name": group_name,
+                "value": round(group_value, 2),
+                "pct": round(group_value / total * 100, 1),
+                "tickers": [{"ticker": p["ticker"], "value": p["value"], "pct": round(p["value"] / total * 100, 1)} for p in sorted(group_positions, key=lambda x: x["value"], reverse=True)],
+            })
+            assigned.update(t for t in tickers)
+
+    # "Other" bucket
+    other = [p for p in positions if p["ticker"] not in assigned]
+    if other:
+        other_value = sum(p["value"] for p in other)
+        groups.append({
+            "name": "Other",
+            "value": round(other_value, 2),
+            "pct": round(other_value / total * 100, 1),
+            "tickers": [{"ticker": p["ticker"], "value": p["value"], "pct": round(p["value"] / total * 100, 1)} for p in sorted(other, key=lambda x: x["value"], reverse=True)],
+        })
+
+    groups.sort(key=lambda x: x["value"], reverse=True)
+
+    # Warnings
+    warnings = []
+    for g in groups:
+        if g["pct"] > 30:
+            warnings.append({"type": "concentration", "message": f"{g['name']} is {g['pct']}% of portfolio — heavy concentration risk", "severity": "high"})
+        elif g["pct"] > 20:
+            warnings.append({"type": "concentration", "message": f"{g['name']} at {g['pct']}% — watch for correlation", "severity": "medium"})
+
+    # Check for correlated themes
+    photonics_pct = sum(g["pct"] for g in groups if "Photonics" in g["name"] or "Optical" in g["name"])
+    if photonics_pct > 25:
+        warnings.append({"type": "thesis_overlap", "message": f"Photonics/Optical total exposure: {photonics_pct:.0f}% — these names are highly correlated and will all move together on sector news", "severity": "high"})
+
+    ai_pct = sum(g["pct"] for g in groups if "AI" in g["name"])
+    if ai_pct > 20:
+        warnings.append({"type": "thesis_overlap", "message": f"AI Infrastructure exposure: {ai_pct:.0f}% — correlated to hyperscaler capex cycle", "severity": "medium"})
+
+    rate_pct = sum(g["pct"] for g in groups if "Rate" in g["name"] or "Fintech" in g["name"])
+    if rate_pct > 20:
+        warnings.append({"type": "macro_risk", "message": f"Rate-sensitive positions: {rate_pct:.0f}% — all hurt by Fed holding/hiking", "severity": "high" if rate_pct > 30 else "medium"})
+
+    return {"groups": groups, "warnings": warnings, "total_value": round(total, 2)}
