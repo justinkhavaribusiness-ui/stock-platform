@@ -357,3 +357,248 @@ async def notify_threat_change(body: dict):
     })
 
     return {"sent": sent}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  RSS-BASED TWITTER/X FEED POLLING (no API key needed)
+# ═══════════════════════════════════════════════════════════════════════
+RSS_BRIDGES = [
+    "https://nitter.net/{handle}/rss",
+    "https://nitter.privacydev.net/{handle}/rss",
+    "https://nitter.poast.org/{handle}/rss",
+]
+
+FOLLOWED_HANDLES = [
+    {"handle": "unusual_whales", "label": "Unusual Whales"},
+    {"handle": "DeItaone", "label": "Walter Bloomberg"},
+    {"handle": "MispricedAssets", "label": "Mispriced Assets"},
+    {"handle": "aleabitoreddit", "label": "Serenity"},
+    {"handle": "Mr_Derivatives", "label": "Mr. Derivatives"},
+    {"handle": "OptionsHawk", "label": "Options Hawk"},
+]
+
+TICKER_NOISE = {"THE", "AND", "FOR", "BUT", "NOT", "YOU", "ALL", "CAN", "HAS", "WAS", "ONE",
+    "OUR", "OUT", "ARE", "HIS", "HOW", "NEW", "NOW", "OLD", "SEE", "WAY", "MAY", "WHO",
+    "DID", "ITS", "LET", "PUT", "SAY", "SHE", "TOO", "USE", "ANY", "FEW", "GOT", "HAD",
+    "EPS", "IPO", "CEO", "CFO", "GDP", "CPI", "PPI", "IMF", "FED", "ETF", "ATH", "ATL",
+    "THIS", "THAT", "WITH", "FROM", "HAVE", "WILL", "BEEN", "JUST", "LIKE", "WHAT",
+    "WHEN", "YOUR", "MORE", "SOME", "THAN", "VERY", "INTO", "OVER", "TAKE", "ONLY",
+    "ALSO", "BACK", "EVEN", "MOST", "MUCH", "THEN", "WELL", "DOWN", "HERE", "HIGH",
+    "FREE", "GOOD", "KNOW", "LOOK", "REAL", "RISK", "SELL", "STOCK", "TRADE", "WATCH",
+    "PRICE", "SHARE", "SHORT", "VALUE", "ABOVE", "BELOW", "TODAY", "TOTAL", "RSS", "BUY", "DCA"}
+
+def _extract_tickers(text: str) -> list:
+    import re
+    if not text: return []
+    dollar = re.findall(r'\$([A-Z]{1,5})\b', text)
+    words = re.findall(r'(?<!\w)([A-Z]{2,5})(?=\s|[,.:;!?\-\)]|$)', text)
+    valid = set(dollar)
+    for t in words:
+        if t not in TICKER_NOISE and len(t) >= 2:
+            valid.add(t)
+    return sorted(valid)
+
+@router.get("/social/poll-feeds")
+async def poll_social_feeds():
+    """Poll RSS bridges for followed accounts, parse tickers, store signals."""
+    try:
+        import feedparser
+    except ImportError:
+        return {"error": "feedparser not installed", "signals": []}
+
+    new_signals = []
+    seen_key = "social:seen_ids"
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for account in FOLLOWED_HANDLES:
+            handle = account["handle"]
+            label = account["label"]
+
+            for bridge_template in RSS_BRIDGES:
+                url = bridge_template.format(handle=handle)
+                try:
+                    r = await client.get(url, follow_redirects=True)
+                    if r.status_code != 200:
+                        continue
+                    feed = feedparser.parse(r.text)
+                    if not feed.entries:
+                        continue
+
+                    for entry in feed.entries[:5]:
+                        entry_id = entry.get("id", entry.get("link", ""))
+                        if rdb.sismember(seen_key, entry_id):
+                            continue
+
+                        title = entry.get("title", "")
+                        summary = entry.get("summary", "")
+                        text = f"{title} {summary}"
+                        tickers = _extract_tickers(text)
+                        published = entry.get("published", "")
+
+                        signal = {
+                            "id": str(uuid.uuid4())[:8],
+                            "source": handle,
+                            "label": label,
+                            "text": title[:500],
+                            "tickers": tickers,
+                            "published": published,
+                            "url": entry.get("link", ""),
+                            "timestamp": _now(),
+                        }
+
+                        rdb.sadd(seen_key, entry_id)
+                        rdb.rpush("social:signals", json.dumps(signal))
+                        rdb.ltrim("social:signals", -500, -1)
+                        new_signals.append(signal)
+
+                        # Send to Discord if tickers found
+                        if tickers and len(tickers) <= 5:
+                            await _send_discord({
+                                "title": f"Signal: {label} (@{handle})",
+                                "description": title[:300],
+                                "color": 0x1da1f2,
+                                "fields": [
+                                    {"name": "Tickers", "value": " ".join(f"${t}" for t in tickers), "inline": True},
+                                ],
+                                "footer": {"text": f"via RSS | {datetime.now().strftime('%I:%M %p')}"},
+                            })
+
+                    break  # Success on this bridge, skip others
+                except Exception:
+                    continue
+
+    return {"new_signals": len(new_signals), "signals": new_signals[:10]}
+
+
+@router.get("/social/signals")
+async def get_social_signals(limit: int = 20):
+    """Get recent social signals."""
+    raw = rdb.lrange("social:signals", -limit, -1)
+    signals = [json.loads(r) for r in raw]
+    signals.reverse()
+    return {"signals": signals, "total": rdb.llen("social:signals")}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  BROWSER PUSH NOTIFICATIONS
+# ═══════════════════════════════════════════════════════════════════════
+PUSH_QUEUE_KEY = "push:queue"
+
+@router.get("/push/pending")
+async def get_pending_push():
+    """Get pending push notifications for the browser to display."""
+    raw = rdb.lrange(PUSH_QUEUE_KEY, 0, -1)
+    notifications = [json.loads(r) for r in raw]
+    # Clear after reading
+    rdb.delete(PUSH_QUEUE_KEY)
+    return {"notifications": notifications}
+
+async def _push_notify(title: str, body: str, tag: str = "alert", urgency: str = "normal"):
+    """Queue a browser push notification."""
+    rdb.rpush(PUSH_QUEUE_KEY, json.dumps({
+        "id": str(uuid.uuid4())[:8],
+        "title": title,
+        "body": body,
+        "tag": tag,
+        "urgency": urgency,
+        "timestamp": _now(),
+    }))
+    rdb.ltrim(PUSH_QUEUE_KEY, -50, -1)
+
+@router.post("/push/test")
+async def test_push():
+    """Send a test push notification."""
+    await _push_notify(
+        "Stock Terminal",
+        "Push notifications are working!",
+        tag="test",
+    )
+    return {"status": "queued"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  NOTIFICATION CENTER — UNIFIED FEED
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/notifications/feed")
+async def notification_feed(limit: int = 30):
+    """Unified notification feed — alerts, signals, briefings, threats."""
+    notifications = []
+
+    # Price alert notifications
+    alert_notifs = [json.loads(r) for r in rdb.lrange("notifications:list", -limit, -1)]
+    notifications.extend(alert_notifs)
+
+    # Social signals (last 10)
+    social = [json.loads(r) for r in rdb.lrange("social:signals", -10, -1)]
+    for s in social:
+        notifications.append({
+            "id": s.get("id", ""),
+            "type": "social_signal",
+            "title": f"{s['label']}: {' '.join('$'+t for t in s.get('tickers', [])[:3])}",
+            "message": s.get("text", "")[:100],
+            "read": False,
+            "timestamp": s.get("timestamp", ""),
+        })
+
+    # Sort by timestamp descending
+    notifications.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
+    return {"notifications": notifications[:limit]}
+
+@router.post("/notifications/mark-read")
+async def mark_notification_read(body: dict):
+    """Mark a notification as read."""
+    notif_id = body.get("id", "")
+    raw = rdb.lrange("notifications:list", 0, -1)
+    for i, r in enumerate(raw):
+        item = json.loads(r)
+        if item.get("id") == notif_id:
+            item["read"] = True
+            rdb.lset("notifications:list", i, json.dumps(item))
+            return {"status": "ok"}
+    return {"status": "not_found"}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  ENHANCED ALERT CHECK WITH PUSH + DISCORD
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.post("/alerts/check-all")
+async def check_all_alerts():
+    """Check price alerts AND push browser notifications + Discord."""
+    result = await check_and_notify()
+
+    # Also queue browser push for each triggered alert
+    for ticker in result.get("alerts", []):
+        await _push_notify(
+            f"ALERT: {ticker}",
+            f"Price target hit — check your position",
+            tag="price_alert",
+            urgency="high",
+        )
+
+    # Check ceasefire probability for threat changes
+    try:
+        ceasefire_raw = rdb.get("cache:ceasefire-prob")
+        if ceasefire_raw:
+            cf = json.loads(ceasefire_raw)
+            intensity = cf.get("war_intensity", 50)
+            last_intensity = int(rdb.get("last:war_intensity") or "50")
+
+            if abs(intensity - last_intensity) >= 10:
+                direction = "escalating" if intensity > last_intensity else "de-escalating"
+                await _push_notify(
+                    f"WAR INTENSITY: {intensity}/100",
+                    f"Conflict {direction} — check ceasefire dashboard",
+                    tag="war_update",
+                    urgency="high",
+                )
+                await notify_threat_change({
+                    "level": "critical" if intensity > 70 else "elevated" if intensity > 40 else "normal",
+                    "headline": f"War intensity moved from {last_intensity} to {intensity} ({direction})",
+                })
+                rdb.set("last:war_intensity", str(intensity))
+    except Exception:
+        pass
+
+    return result

@@ -1582,7 +1582,26 @@ function CryptoPanel() {
     const t4 = setInterval(loadUnreadAlerts, 30000);
     // Live Fidelity portfolio refresh every 30s (backend fetches real-time prices)
     const t5 = setInterval(() => { loadFidelityPositions(false); }, 30000);
-    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); clearInterval(t4); clearInterval(t5); };
+    // Poll for push notifications every 15s + check alerts with push/discord every 60s
+    const t6 = setInterval(async () => {
+      try {
+        const r = await fetch(`${BASE}/push/pending`);
+        const d = await r.json();
+        if (d.notifications?.length > 0 && "Notification" in window && Notification.permission === "granted") {
+          for (const n of d.notifications) {
+            new Notification(n.title, { body: n.body, tag: n.tag, icon: "/favicon.ico" });
+          }
+        }
+      } catch {}
+    }, 15000);
+    const t7 = setInterval(async () => {
+      try { await fetch(`${BASE}/alerts/check-all`, { method: "POST" }); } catch {}
+    }, 60000);
+    // Poll social feeds every 5 minutes
+    const t8 = setInterval(async () => {
+      try { await fetch(`${BASE}/social/poll-feeds`); } catch {}
+    }, 300000);
+    return () => { clearInterval(t1); clearInterval(t2); clearInterval(t3); clearInterval(t4); clearInterval(t5); clearInterval(t6); clearInterval(t7); clearInterval(t8); };
   }, []);
   useEffect(() => {
     const portTickers = Object.keys(portfolio);
