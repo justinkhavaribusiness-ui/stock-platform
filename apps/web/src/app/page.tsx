@@ -34,6 +34,7 @@ import TrumpMonitor from "./TrumpMonitor";
 import PositionSizer from "./PositionSizer";
 import SectorExposure from "./SectorExposure";
 import Institutional from "./Institutional";
+import SocialFeed from "./SocialFeed";
 
 const FONTS_CSS = `
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1825,12 +1826,13 @@ function CryptoPanel() {
     { id:"possizer",    label:"Sizer",      icon:"📐" },
     { id:"sectorexp",   label:"Exposure",   icon:"🎯" },
     { id:"instl",       label:"Inst.",      icon:"🏦" },
+    { id:"socialfeed",  label:"Signals",    icon:"📡" },
   ];
 
   const cats:{cat:string,items:{id:string,label:string,icon:string}[]}[] = [
     {cat:"Dashboard", items:[{id:"dashboard",label:"Dashboard",icon:"◈"}]},
     {cat:"Charts", items:tabs.filter(t=>["charts","robinhood","quotes","watchlist","heatmap"].includes(t.id))},
-    {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment"].includes(t.id))},
+    {cat:"Social", items:tabs.filter(t=>["social","feeds","news","sentiment","socialfeed"].includes(t.id))},
     {cat:"Photonics", items:tabs.filter(t=>["photonics","screener","analytics"].includes(t.id))},
     {cat:"Portfolio", items:tabs.filter(t=>["portfolio","journal","perf","convictions","pnlcal","eqcurve","attribution","margin","health","growth","eqcurve2","dividends","fidsync","corrmatrix","multiacct","sectorexp"].includes(t.id))},
     {cat:"AI", items:tabs.filter(t=>["ai","backtest","patterns","montecarlo","mpt","tradereplay"].includes(t.id))},
@@ -7622,6 +7624,9 @@ function CryptoPanel() {
 
         {/* ── INSTITUTIONAL ANALYTICS ────────────────────── */}
         {tab==="instl" && <Institutional dark={dark} BASE={BASE} />}
+
+        {/* ── SOCIAL SIGNAL FEED ─────────────────────────── */}
+        {tab==="socialfeed" && <SocialFeed dark={dark} BASE={BASE} />}
 
       {/* ── SHORTCUTS HELP MODAL ──────────────────────────── */}
       {showShortcuts && (
