@@ -139,6 +139,24 @@ def parse_options_csv(content: str) -> dict:
             continue
 
         if net_open_qty > 0.001:
+            # ── Auto-close expired options with no closing transaction ──
+            if info.get("expired", False):
+                exp_pnl = round(open_cash + close_cash, 2)
+                closed_trades.append({
+                    "symbol": sym, "ticker": info["ticker"], "strike": info["strike"],
+                    "expiration": info["expiration"], "call_put": info["call_put"],
+                    "strategy": strategy, "contracts": int(net_open_qty),
+                    "pnl": exp_pnl,
+                    "pnl_pct": round((exp_pnl / abs(open_cash)) * 100, 1) if open_cash else 0,
+                    "open_date": openings[-1]["date"],
+                    "close_date": info["expiration"],
+                    "account": openings[0]["account"],
+                    "is_short": is_short,
+                    "auto_expired": True,
+                    "open_credit" if is_short else "open_debit": round(abs(open_cash), 2),
+                })
+                continue
+
             # ── OPEN position ──────────────────────────────────────────
             # Average cost/premium across openings
             avg_price = sum(t["price"] * t["qty"] for t in openings) / total_open_qty if total_open_qty else 0

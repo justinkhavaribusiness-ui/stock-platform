@@ -4102,6 +4102,21 @@ async def upload_options_journal(file: "UploadFile" = fastapi.File(...)):
 
         if net_open_qty > 0.001:
             avg_price = sum(t["price"]*t["qty"] for t in openings)/total_open_qty if total_open_qty else 0
+            # Auto-close expired options that have no closing transaction in the CSV
+            if info["expired"]:
+                exp_pnl = round(open_cash, 2) if is_short else round(open_cash, 2)
+                key = "open_credit" if is_short else "open_debit"
+                trade = {"symbol": sym, "ticker": info["ticker"], "strike": info["strike"],
+                         "expiration": info["expiration"], "call_put": info["call_put"],
+                         "strategy": strategy, "contracts": int(net_open_qty),
+                         "pnl": exp_pnl,
+                         "pnl_pct": 100.0 if is_short else -100.0,
+                         "open_date": openings[-1]["date"], "close_date": info["expiration"],
+                         "account": openings[0]["account"], "is_short": is_short,
+                         "auto_expired": True}
+                trade[key] = round(abs(open_cash), 2)
+                closed_trades.append(trade)
+                continue
             key = "premium_received" if is_short else "cost_basis"
             pos = {"symbol": sym, "ticker": info["ticker"], "strike": info["strike"],
                    "expiration": info["expiration"], "call_put": info["call_put"],
